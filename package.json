@@ -1,0 +1,153 @@
+{
+  "name": "claude-sessions",
+  "displayName": "Claude Sessions",
+  "description": "Sessions Claude Code dans le panneau, à côté du terminal : un clic ouvre ou retrouve le terminal de la session.",
+  "version": "0.1.0",
+  "publisher": "black",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "panel": [
+        {
+          "id": "claudeSessions",
+          "title": "Sessions Claude",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "claudeSessions": [
+        {
+          "id": "claudeSessions.view",
+          "type": "webview",
+          "name": "Sessions Claude",
+          "contextualTitle": "Sessions Claude"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "claudeSessions.newSession",
+        "title": "Nouvelle session Claude…",
+        "category": "Claude Sessions",
+        "icon": "$(add)"
+      },
+      {
+        "command": "claudeSessions.refresh",
+        "title": "Rafraîchir",
+        "category": "Claude Sessions",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "claudeSessions.dockToTerminal",
+        "title": "Placer la liste des sessions à côté du terminal",
+        "category": "Claude Sessions",
+        "icon": "$(layout-panel)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "claudeSessions.newSession",
+          "when": "view == claudeSessions.view",
+          "group": "navigation@0"
+        },
+        {
+          "command": "claudeSessions.refresh",
+          "when": "view == claudeSessions.view",
+          "group": "navigation@1"
+        },
+        {
+          "command": "claudeSessions.dockToTerminal",
+          "when": "view == claudeSessions.view",
+          "group": "navigation@2"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Claude Sessions",
+      "properties": {
+        "claudeSessions.openBehavior": {
+          "type": "string",
+          "enum": [
+            "addToWorkspace",
+            "newWindow",
+            "sameWindow"
+          ],
+          "enumDescriptions": [
+            "Ajoute le dossier à l'espace de travail courant puis le révèle dans l'explorateur (défaut).",
+            "Ouvre le dossier dans une nouvelle fenêtre VS Code.",
+            "Remplace le dossier de la fenêtre courante."
+          ],
+          "default": "addToWorkspace",
+          "description": "Que faire quand le projet d'une session n'est pas déjà dans l'espace de travail (si revealProjectOnClick est actif)."
+        },
+        "claudeSessions.showPastSessions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Afficher aussi les sessions terminées (lues depuis ~/.claude/history.jsonl)."
+        },
+        "claudeSessions.recentPerProject": {
+          "type": "number",
+          "default": 5,
+          "minimum": 0,
+          "description": "Nombre maximal de sessions terminées affichées par projet."
+        },
+        "claudeSessions.pollIntervalSeconds": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "description": "Intervalle de rafraîchissement automatique (en plus de la surveillance des fichiers)."
+        },
+        "claudeSessions.claudeCommand": {
+          "type": "string",
+          "default": "claude",
+          "description": "Commande utilisée pour reprendre une session (« claude --resume <id> »)."
+        },
+        "claudeSessions.revealProjectOnClick": {
+          "type": "boolean",
+          "default": true,
+          "description": "Au clic sur une session, montrer aussi l'arborescence du projet dans l'explorateur (en plus d'ouvrir son terminal)."
+        },
+        "claudeSessions.collapseOthersInExplorer": {
+          "type": "boolean",
+          "default": true,
+          "description": "Replier les autres dossiers de l'explorateur avant de déplier le projet de la session cliquée."
+        },
+        "claudeSessions.showWorkspaceFolders": {
+          "type": "boolean",
+          "default": true,
+          "description": "Afficher aussi les dossiers de l'espace de travail qui n'ont encore aucune session, pour pouvoir en démarrer une."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "compile-tests": "tsc -p ./",
+    "test": "npm run compile-tests && node --test out/model.test.js",
+    "package": "npm run test && npm run build && vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.0"
+  }
+}
