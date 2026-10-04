@@ -99,12 +99,6 @@ body {
 .session .meta .here { display: inline-flex; align-items: center; gap: 3px; }
 .session .meta .here svg { width: 11px; height: 11px; }
 .session .meta .sep::before { content: '·'; }
-.session .acts {
-  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
-  display: none; gap: 1px; padding: 1px; border-radius: 5px; background: var(--hover);
-}
-.session:hover .acts, .session:focus-visible .acts { display: inline-flex; }
-.session.selected .acts { background: var(--sel-active); }
 .session:focus-visible { box-shadow: inset 0 0 0 1px var(--focus); }
 
 .empty { padding: 24px 12px; text-align: center; color: var(--muted); font-size: 12px; line-height: 1.6; }

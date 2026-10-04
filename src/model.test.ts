@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { buildGroups, gitRoot, isInactive, isInactiveSession, isSessionAlive, parseHistory, parsePpid, parseStartTime, readHistory, readLiveSessions, truncate, formatRelative, LiveSession } from './model';
+import { buildGroups, gitRoot, liveStatus, notableTransition, isInactive, isInactiveSession, isSessionAlive, parseHistory, parsePpid, parseStartTime, readHistory, readLiveSessions, truncate, LiveSession } from './model';
 
 const live = (o: Partial<LiveSession>): LiveSession => ({ pid: 1, sessionId: 's', cwd: '/p', ...o });
 
@@ -124,6 +124,19 @@ test('isInactiveSession masque une vieille session terminée, jamais une session
   assert.equal(isInactiveSession(s(629), 0, now), false, '0 : tout afficher');
 });
 
+test('notableTransition signale une fin de travail ou une demande de validation, rien d\'autre', () => {
+  assert.equal(notableTransition('busy', 'idle'), 'done');
+  assert.equal(notableTransition('busy', 'waiting'), 'waiting');
+  assert.equal(notableTransition('idle', 'waiting'), 'waiting');
+  assert.equal(notableTransition(undefined, 'idle'), undefined, 'premier relevé après démarrage : pas de fausse alerte');
+  assert.equal(notableTransition('busy', 'busy'), undefined);
+  assert.equal(notableTransition('waiting', 'busy'), undefined, 'validation donnée : Claude reprend');
+  assert.equal(notableTransition('idle', 'busy'), undefined, 'nouveau prompt');
+  assert.equal(liveStatus(live({ status: 'waiting' })), 'waiting');
+  assert.equal(liveStatus(live({ status: 'busy' })), 'busy');
+  assert.equal(liveStatus(live({ status: 'shell' })), 'idle');
+});
+
 test('buildGroups respecte recentPerProject et showPast', () => {
   const history = parseHistory(
     Array.from({ length: 8 }, (_, i) => JSON.stringify({ display: `p${i}`, timestamp: i, project: '/p', sessionId: `s${i}` })).join('\n'),
@@ -134,13 +147,10 @@ test('buildGroups respecte recentPerProject et showPast', () => {
   assert.equal(buildGroups([], history, { recentPerProject: 3, showPast: false }).length, 0);
 });
 
-test('truncate et formatRelative', () => {
+test('truncate', () => {
   assert.equal(truncate('a  b\nc', 10), 'a b c');
   assert.equal(truncate('ma proprio m\'a envoyé ce mail [Pasted text #1 +10 lines], regarde'), 'ma proprio m\'a envoyé ce mail , regarde'.replace(' ,', ','));
   assert.equal(truncate('x'.repeat(100), 10).length, 10);
-  assert.equal(formatRelative(1000, 1000 + 30_000), "à l'instant");
-  assert.equal(formatRelative(0, 5 * 60_000), 'il y a 5 min');
-  assert.equal(formatRelative(0, 3 * 3600_000), 'il y a 3 h');
 });
 
 test('buildGroups préfère un vrai prompt à une commande slash comme titre', () => {

@@ -17,6 +17,10 @@ automatiquement dans le panneau Terminal (commande interne `vscode.moveViews`) ;
   et la liste peut être glissée à gauche ou à droite du terminal ; VS Code mémorise la disposition.
 - **Session qui attend une validation** (demande de permission ou question de Claude) : point orange,
   en tête de son projet, et la barre d'état passe en « N à valider » sur fond d'avertissement.
+- **Notifications** : quand une session qui tourne dans un terminal de la fenêtre termine son travail ou attend
+  une validation, une notification le signale (bouton « Afficher » pour aller à son terminal), sauf si ce terminal
+  est déjà le terminal actif d'une fenêtre au premier plan. Désactivable via `claudeSessions.notifications`.
+  Le panneau Sortie « Claude Sessions » note chaque changement de statut détecté et la décision prise.
 - **Barre d'état** : nombre de sessions actives, et combien sont en train de travailler.
 - **Inactif masqué** : une session terminée depuis plus de 48 h (`claudeSessions.hideInactiveAfterHours`,
   0 pour tout afficher) disparaît de la liste, et avec elle un projet qui n'a plus rien de récent, sauf s'il est

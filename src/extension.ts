@@ -1,9 +1,12 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { LiveSession, ProjectGroup, SessionInfo, buildGroups, claudeDir, gitRoot, isBusy, isInactive, isInactiveSession, isWaiting, parentPids, readHistory, readLiveSessions, truncate } from './model';
+import { LiveSession, LiveStatus, ProjectGroup, SessionInfo, buildGroups, claudeDir, gitRoot, isBusy, isInactive, isInactiveSession, isWaiting, liveStatus, notableTransition, parentPids, readHistory, readLiveSessions, truncate } from './model';
 
 const VIEW_ID = 'claudeSessions.view';
+
+/** Journal « Claude Sessions » (panneau Sortie) : VS Code l'écrit aussi dans un fichier de ses logs. */
+let log: vscode.LogOutputChannel;
 
 function cfg<T>(key: string, def: T): T {
   return vscode.workspace.getConfiguration('claudeSessions').get<T>(key, def);
@@ -147,8 +150,8 @@ async function dockToTerminal(): Promise<boolean> {
 // ---------- Vue ----------
 
 interface WireSession {
-  sessionId: string; title: string; project: string; lastPrompt: string; lastActivity: number; promptCount: number;
-  live?: { pid: number; busy: boolean; waiting: boolean; status?: string; name?: string; startedAt?: number };
+  sessionId: string; title: string; lastPrompt: string; lastActivity: number; promptCount: number;
+  live?: { pid: number; busy: boolean; waiting: boolean };
   inThisWindow: boolean;
   inactive: boolean;
 }
@@ -159,6 +162,7 @@ class SessionsView implements vscode.WebviewViewProvider {
   groups: ProjectGroup[] = [];
   private selectedId: string | null = null;
   private terminals = new Map<string, vscode.Terminal>(); // sessionId -> terminal hébergeant la session (cette fenêtre)
+  private lastStatus = new Map<string, LiveStatus>(); // statut au relevé précédent, pour détecter les transitions
 
   constructor(private readonly ctx: vscode.ExtensionContext, private readonly onChanged: () => void) {}
 
@@ -191,7 +195,37 @@ class SessionsView implements vscode.WebviewViewProvider {
     this.syncSelection();
     this.post();
     this.onChanged();
+    this.notifyTransitions();
     for (const g of this.groups) if (g.liveCount) void openGitRepository(g.project);
+  }
+
+  /**
+   * Prévient quand une session termine son travail ou attend une validation, sauf si son terminal est le
+   * terminal actif d'une fenêtre au premier plan (l'API ne dit pas si le focus est dans le terminal lui-même).
+   */
+  private notifyTransitions(): void {
+    const previous = this.lastStatus;
+    this.lastStatus = new Map();
+    for (const g of this.groups) for (const s of g.sessions) {
+      if (!s.live) continue;
+      const now = liveStatus(s.live);
+      this.lastStatus.set(s.sessionId, now);
+      const change = notableTransition(previous.get(s.sessionId), now);
+      if (!change) continue;
+      const term = this.terminals.get(s.sessionId);
+      const skip = !cfg('notifications', true) ? 'notifications désactivées'
+        // Chaque fenêtre VS Code fait tourner sa propre instance de l'extension : seule celle du terminal prévient.
+        : !term ? 'session hors des terminaux de cette fenêtre'
+        : vscode.window.state.focused && vscode.window.activeTerminal === term ? 'son terminal est actif, fenêtre au premier plan'
+        : undefined;
+      log.info(`${s.sessionId} « ${s.title} » ${previous.get(s.sessionId)} -> ${now} : ${skip ? `pas de notification (${skip})` : 'notification'}`);
+      if (skip) continue;
+      const where = path.basename(s.project);
+      const shown = change === 'waiting'
+        ? vscode.window.showWarningMessage(`« ${s.title} » attend une validation (${where}).`, 'Afficher')
+        : vscode.window.showInformationMessage(`Claude a terminé : « ${s.title} » (${where}).`, 'Afficher');
+      void shown.then((choice) => { if (choice === 'Afficher') void this.openSession(s); });
+    }
   }
 
   /** Surligne la session dont le terminal est actif. */
@@ -211,8 +245,8 @@ class SessionsView implements vscode.WebviewViewProvider {
       // Les dossiers ouverts dans la fenêtre restent visibles même sans activité récente.
       inactive: !roots.has(g.project) && isInactive(g, hideAfter),
       sessions: g.sessions.map((s) => ({
-        sessionId: s.sessionId, title: s.title, project: s.project, lastPrompt: s.lastPrompt, lastActivity: s.lastActivity, promptCount: s.promptCount,
-        live: s.live ? { pid: s.live.pid, busy: isBusy(s.live), waiting: isWaiting(s.live), status: s.live.status, name: s.live.name, startedAt: s.live.startedAt } : undefined,
+        sessionId: s.sessionId, title: s.title, lastPrompt: s.lastPrompt, lastActivity: s.lastActivity, promptCount: s.promptCount,
+        live: s.live ? { pid: s.live.pid, busy: isBusy(s.live), waiting: isWaiting(s.live) } : undefined,
         inThisWindow: this.terminals.has(s.sessionId),
         inactive: isInactiveSession(s, hideAfter),
       })),
@@ -282,13 +316,11 @@ class SessionsView implements vscode.WebviewViewProvider {
     switch (m.type) {
       case 'ready': case 'refresh': await this.refresh(); break;
       case 'open': if (s) await this.openSession(s); break;
-      case 'copy': if (s) await vscode.env.clipboard.writeText(s.sessionId); break;
       case 'reveal': if (m.project) await revealProject(m.project); break;
       case 'newWindow': if (m.project) await revealProject(m.project, 'newWindow'); break;
       case 'newSession': if (m.project) this.startNewSession(m.project); break;
       case 'pickNewSession': await vscode.commands.executeCommand('claudeSessions.newSession'); break;
       case 'togglePast': await vscode.workspace.getConfiguration('claudeSessions').update('showPastSessions', !cfg('showPastSessions', true), vscode.ConfigurationTarget.Global); break;
-      case 'dock': await dockToTerminal(); break;
     }
   }
 
@@ -308,6 +340,8 @@ class SessionsView implements vscode.WebviewViewProvider {
 // ---------- Activation ----------
 
 export function activate(context: vscode.ExtensionContext): void {
+  log = vscode.window.createOutputChannel('Claude Sessions', { log: true });
+  context.subscriptions.push(log);
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   status.command = `${VIEW_ID}.focus`;
 

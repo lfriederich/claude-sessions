@@ -148,6 +148,20 @@ export function isWaiting(s: LiveSession): boolean {
   return (s.status ?? '').toLowerCase() === 'waiting';
 }
 
+export type LiveStatus = 'busy' | 'waiting' | 'idle';
+
+export function liveStatus(s: LiveSession): LiveStatus {
+  return isWaiting(s) ? 'waiting' : isBusy(s) ? 'busy' : 'idle';
+}
+
+/** Ce qui mérite d'être signalé entre deux relevés : une fin de travail, ou une demande de validation. */
+export function notableTransition(before: LiveStatus | undefined, now: LiveStatus): 'done' | 'waiting' | undefined {
+  if (!before || before === now) return undefined; // premier relevé : on ne connaît pas l'état précédent
+  if (now === 'waiting') return 'waiting';
+  if (before === 'busy' && now === 'idle') return 'done';
+  return undefined;
+}
+
 export function buildGroups(live: LiveSession[], history: HistoryEntry[], opts: BuildOptions): ProjectGroup[] {
   const byId = new Map<string, SessionInfo>();
 
@@ -281,23 +295,4 @@ export function procStartTime(pid: number, procRoot = '/proc'): string | undefin
   } catch {
     return undefined;
   }
-}
-
-export function formatRelative(ts: number, now = Date.now()): string {
-  const diff = Math.max(0, now - ts);
-  const m = Math.floor(diff / 60000);
-  if (m < 1) return "à l'instant";
-  if (m < 60) return `il y a ${m} min`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `il y a ${h} h`;
-  const d = Math.floor(h / 24);
-  if (d < 30) return `il y a ${d} j`;
-  return new Date(ts).toLocaleDateString('fr-FR');
-}
-
-export function formatDuration(ms: number): string {
-  const m = Math.floor(ms / 60000);
-  if (m < 60) return `${m} min`;
-  const h = Math.floor(m / 60);
-  return `${h} h ${String(m % 60).padStart(2, '0')}`;
 }
