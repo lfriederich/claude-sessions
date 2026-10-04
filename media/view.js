@@ -8,6 +8,8 @@
   const expanded = new Set(saved.expanded || []);
   let query = '';
   let state = { groups: [], selectedId: null, showPast: true };
+  /** Dernière session ramenée à l'écran : on ne recentre que si la sélection change. */
+  let revealedId = null;
 
   const I = {
     chev: '<svg class="chev" viewBox="0 0 16 16" fill="currentColor"><path d="M4.5 6l3.5 3.5L11.5 6l.7.7-4.2 4.2-4.2-4.2z"/></svg>',
@@ -110,12 +112,16 @@
       html += `</div></section>`;
     }
     html += `</div>`;
+    // innerHTML recrée la zone qui défile : sans ça, chaque rendu (clic, sondage) remonte en haut.
+    const scrollTop = app.querySelector('.list')?.scrollTop ?? 0;
     app.innerHTML = html;
+    app.querySelector('.list').scrollTop = scrollTop;
 
     const input = /** @type {HTMLInputElement} */ (document.getElementById('q'));
     input.addEventListener('input', () => { const pos = input.selectionStart; query = input.value; render(); const i2 = document.getElementById('q'); i2.focus(); i2.setSelectionRange(pos, pos); });
     const sel = app.querySelector('.session.selected');
-    if (sel) sel.scrollIntoView({ block: 'nearest' });
+    if (sel && state.selectedId !== revealedId) sel.scrollIntoView({ block: 'nearest' });
+    revealedId = state.selectedId;
   }
 
   document.addEventListener('click', (ev) => {

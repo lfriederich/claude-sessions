@@ -2,7 +2,7 @@
   "name": "claude-sessions",
   "displayName": "Claude Sessions",
   "description": "Sessions Claude Code dans le panneau, à côté du terminal : un clic ouvre ou retrouve le terminal de la session.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "black",
   "private": true,
   "license": "MIT",
