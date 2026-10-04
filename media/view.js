@@ -7,9 +7,11 @@
   /** @type {Set<string>} */
   const expanded = new Set(saved.expanded || []);
   let query = '';
-  let state = { groups: [], selectedId: null, showPast: true };
+  let state = { groups: [], selectedId: null, showPast: true, hideAfter: 0 };
   /** Dernière session ramenée à l'écran : on ne recentre que si la sélection change. */
   let revealedId = null;
+  /** Dernier état reçu, sérialisé : le sondage renvoie souvent le même, inutile de tout redessiner. */
+  let lastState = '';
 
   const I = {
     chev: '<svg class="chev" viewBox="0 0 16 16" fill="currentColor"><path d="M4.5 6l3.5 3.5L11.5 6l.7.7-4.2 4.2-4.2-4.2z"/></svg>',
@@ -53,7 +55,10 @@
   function render() {
     const app = document.getElementById('app');
     const q = query.trim().toLowerCase();
-    const groups = state.groups
+    // Un projet inactif n'apparaît que si on cherche son dossier.
+    const visible = state.groups.filter((g) => !g.inactive || (q && g.project.toLowerCase().includes(q)));
+    const hidden = q ? 0 : state.groups.length - visible.length;
+    const groups = visible
       .map((g) => ({ ...g, sessions: g.sessions.filter((s) => !q || `${s.title} ${s.lastPrompt} ${g.project}`.toLowerCase().includes(q)) }))
       .filter((g) => g.sessions.length || (!q && !g.liveCount));
 
@@ -65,16 +70,17 @@
       </div>
       <div class="list">`;
 
-    if (!groups.length) {
+    if (!groups.length && !hidden) {
       html += `<div class="empty">${q ? 'Aucune session ne correspond.' : 'Aucune session Claude Code trouvée.'}<br/><a data-action="refresh">Rafraîchir</a></div>`;
     }
 
     for (const g of groups) {
       const open = isOpen(g) || q;
-      const idle = g.liveCount - g.busyCount;
+      const idle = g.liveCount - g.busyCount - g.waitingCount;
       html += `<section class="project ${open ? '' : 'collapsed'}" data-project="${esc(g.project)}">
         <div class="project-head" title="${esc(g.project)}">
           ${I.chev}<span class="name">${esc(base(g.project))}</span>
+          ${g.waitingCount ? `<span class="pill waiting">${g.waitingCount} à valider</span>` : ''}
           ${g.busyCount ? `<span class="pill busy">${g.busyCount} en cours</span>` : ''}
           ${idle ? `<span class="pill idle">${idle} en attente</span>` : ''}
           <span class="acts">
@@ -91,8 +97,8 @@
         </div>`;
       }
       for (const s of g.sessions) {
-        const cls = s.live ? (s.live.busy ? 'live-busy' : 'live-idle') : 'past';
-        const status = s.live ? (s.live.busy ? 'en cours' : 'en attente de réponse') : '';
+        const cls = s.live ? (s.live.waiting ? 'live-waiting' : s.live.busy ? 'live-busy' : 'live-idle') : 'past';
+        const status = s.live ? (s.live.waiting ? 'attend une validation' : s.live.busy ? 'en cours' : 'en attente de réponse') : '';
         const meta = [
           status ? `<span class="status">${status}</span>` : '',
           `<span>${relative(s.lastActivity)}</span>`,
@@ -111,14 +117,23 @@
       }
       html += `</div></section>`;
     }
+    if (hidden) {
+      html += `<div class="hidden-note">${hidden} projet${hidden > 1 ? 's' : ''} sans activité depuis ${state.hideAfter} h masqué${hidden > 1 ? 's' : ''}.<br/>Taper le nom d'un dossier dans le filtre pour le retrouver.</div>`;
+    }
     html += `</div>`;
-    // innerHTML recrée la zone qui défile : sans ça, chaque rendu (clic, sondage) remonte en haut.
+    // innerHTML recrée tout : sans ça, chaque rendu (clic, sondage) remonte la liste en haut
+    // et fait perdre le focus au filtre en pleine frappe ou à la session parcourue au clavier.
     const scrollTop = app.querySelector('.list')?.scrollTop ?? 0;
+    const active = /** @type {HTMLElement | null} */ (document.activeElement);
+    const caret = active instanceof HTMLInputElement ? [active.selectionStart, active.selectionEnd] : null;
+    const focusedId = active?.classList.contains('session') ? active.getAttribute('data-id') : null;
     app.innerHTML = html;
     app.querySelector('.list').scrollTop = scrollTop;
 
     const input = /** @type {HTMLInputElement} */ (document.getElementById('q'));
-    input.addEventListener('input', () => { const pos = input.selectionStart; query = input.value; render(); const i2 = document.getElementById('q'); i2.focus(); i2.setSelectionRange(pos, pos); });
+    input.addEventListener('input', () => { query = input.value; render(); });
+    if (caret) { input.focus({ preventScroll: true }); input.setSelectionRange(caret[0], caret[1]); }
+    else if (focusedId) /** @type {HTMLElement | null} */ (app.querySelector(`.session[data-id="${CSS.escape(focusedId)}"]`))?.focus({ preventScroll: true });
     const sel = app.querySelector('.session.selected');
     if (sel && state.selectedId !== revealedId) sel.scrollIntoView({ block: 'nearest' });
     revealedId = state.selectedId;
@@ -161,7 +176,12 @@
 
   window.addEventListener('message', (ev) => {
     const msg = ev.data;
-    if (msg.type === 'state') { state = msg; render(); }
+    if (msg.type !== 'state') return;
+    const key = JSON.stringify(msg);
+    if (key === lastState) return;
+    lastState = key;
+    state = msg;
+    render();
   });
   setInterval(render, 30_000); // rafraîchit les « il y a X min »
   vscode.postMessage({ type: 'ready' });

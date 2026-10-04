@@ -9,6 +9,7 @@
   --border: var(--vscode-panel-border, var(--vscode-widget-border, rgba(128,128,128,.25)));
   --busy: var(--vscode-charts-yellow, #e2b93d);
   --idle: var(--vscode-charts-green, #4caf50);
+  --waiting: var(--vscode-charts-orange, #d18616);
   --past: var(--vscode-disabledForeground, var(--muted));
   --badge-bg: var(--vscode-badge-background);
   --badge-fg: var(--vscode-badge-foreground);
@@ -65,6 +66,7 @@ body {
 }
 .project-head .pill.busy { background: color-mix(in srgb, var(--busy) 25%, transparent); color: var(--busy); }
 .project-head .pill.idle { background: color-mix(in srgb, var(--idle) 25%, transparent); color: var(--idle); }
+.project-head .pill.waiting { background: color-mix(in srgb, var(--waiting) 25%, transparent); color: var(--waiting); }
 .project-head .acts { display: none; gap: 2px; }
 .project-head:hover .acts { display: inline-flex; }
 .project.collapsed .sessions { display: none; }
@@ -80,6 +82,7 @@ body {
 .session .dot::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--past); }
 .session.live-idle .dot::before { background: var(--idle); box-shadow: 0 0 0 3px color-mix(in srgb, var(--idle) 25%, transparent); }
 .session.live-busy .dot::before { background: var(--busy); animation: pulse 1.4s ease-in-out infinite; }
+.session.live-waiting .dot::before { background: var(--waiting); box-shadow: 0 0 0 3px color-mix(in srgb, var(--waiting) 35%, transparent); }
 @keyframes pulse {
   0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--busy) 55%, transparent); }
   60% { box-shadow: 0 0 0 7px transparent; }
@@ -92,6 +95,7 @@ body {
 .session .meta .status { font-weight: 600; }
 .session.live-busy .meta .status { color: var(--busy); }
 .session.live-idle .meta .status { color: var(--idle); }
+.session.live-waiting .meta .status { color: var(--waiting); }
 .session .meta .here { display: inline-flex; align-items: center; gap: 3px; }
 .session .meta .here svg { width: 11px; height: 11px; }
 .session .meta .sep::before { content: '·'; }
@@ -105,6 +109,7 @@ body {
 
 .empty { padding: 24px 12px; text-align: center; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .empty a { color: var(--accent); cursor: pointer; }
+.hidden-note { padding: 12px 12px 4px; text-align: center; color: var(--muted); font-size: 11px; line-height: 1.5; }
 
 .session.none .dot::before { display: none; }
 .session.none .dot svg { width: 12px; height: 12px; color: var(--muted); }

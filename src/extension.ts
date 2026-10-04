@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { LiveSession, ProjectGroup, SessionInfo, buildGroups, claudeDir, isBusy, parentPids, readHistory, readLiveSessions, truncate } from './model';
+import { LiveSession, ProjectGroup, SessionInfo, buildGroups, claudeDir, isBusy, isInactive, isWaiting, parentPids, readHistory, readLiveSessions, truncate } from './model';
 
 const VIEW_ID = 'claudeSessions.view';
 
@@ -126,10 +126,10 @@ async function dockToTerminal(): Promise<boolean> {
 
 interface WireSession {
   sessionId: string; title: string; project: string; lastPrompt: string; lastActivity: number; promptCount: number;
-  live?: { pid: number; busy: boolean; status?: string; name?: string; startedAt?: number };
+  live?: { pid: number; busy: boolean; waiting: boolean; status?: string; name?: string; startedAt?: number };
   inThisWindow: boolean;
 }
-interface WireGroup { project: string; liveCount: number; busyCount: number; sessions: WireSession[] }
+interface WireGroup { project: string; liveCount: number; busyCount: number; waitingCount: number; inactive: boolean; sessions: WireSession[] }
 
 class SessionsView implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
@@ -157,7 +157,7 @@ class SessionsView implements vscode.WebviewViewProvider {
     if (cfg('showWorkspaceFolders', true)) {
       for (const f of vscode.workspace.workspaceFolders ?? []) {
         const p = f.uri.fsPath;
-        if (!this.groups.some((g) => g.project === p)) this.groups.push({ project: p, sessions: [], liveCount: 0, busyCount: 0 });
+        if (!this.groups.some((g) => g.project === p)) this.groups.push({ project: p, sessions: [], liveCount: 0, busyCount: 0, waitingCount: 0 });
       }
     }
     this.terminals.clear();
@@ -180,15 +180,19 @@ class SessionsView implements vscode.WebviewViewProvider {
 
   private post(): void {
     if (!this.view) return;
+    const hideAfter = cfg('hideInactiveAfterHours', 48);
+    const roots = new Set((vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath));
     const groups: WireGroup[] = this.groups.map((g) => ({
-      project: g.project, liveCount: g.liveCount, busyCount: g.busyCount,
+      project: g.project, liveCount: g.liveCount, busyCount: g.busyCount, waitingCount: g.waitingCount,
+      // Les dossiers ouverts dans la fenêtre restent visibles même sans activité récente.
+      inactive: !roots.has(g.project) && isInactive(g, hideAfter),
       sessions: g.sessions.map((s) => ({
         sessionId: s.sessionId, title: s.title, project: s.project, lastPrompt: s.lastPrompt, lastActivity: s.lastActivity, promptCount: s.promptCount,
-        live: s.live ? { pid: s.live.pid, busy: isBusy(s.live), status: s.live.status, name: s.live.name, startedAt: s.live.startedAt } : undefined,
+        live: s.live ? { pid: s.live.pid, busy: isBusy(s.live), waiting: isWaiting(s.live), status: s.live.status, name: s.live.name, startedAt: s.live.startedAt } : undefined,
         inThisWindow: this.terminals.has(s.sessionId),
       })),
     }));
-    void this.view.webview.postMessage({ type: 'state', groups, selectedId: this.selectedId, showPast: cfg('showPastSessions', true) });
+    void this.view.webview.postMessage({ type: 'state', groups, selectedId: this.selectedId, showPast: cfg('showPastSessions', true), hideAfter });
     const live = this.groups.reduce((n, g) => n + g.liveCount, 0);
     this.view.badge = live ? { value: live, tooltip: `${live} session(s) active(s)` } : undefined;
   }
@@ -284,8 +288,10 @@ export function activate(context: vscode.ExtensionContext): void {
   const view = new SessionsView(context, () => {
     const live = view.groups.reduce((n, g) => n + g.liveCount, 0);
     const busy = view.groups.reduce((n, g) => n + g.busyCount, 0);
-    status.text = busy ? `$(sync~spin) Claude ${busy}/${live}` : `$(hubot) Claude ${live}`;
-    status.tooltip = `${live} session(s) Claude Code active(s), ${busy} en cours de travail`;
+    const waiting = view.groups.reduce((n, g) => n + g.waitingCount, 0);
+    status.text = waiting ? `$(bell-dot) Claude ${waiting} à valider` : busy ? `$(sync~spin) Claude ${busy}/${live}` : `$(hubot) Claude ${live}`;
+    status.backgroundColor = waiting ? new vscode.ThemeColor('statusBarItem.warningBackground') : undefined;
+    status.tooltip = `${live} session(s) Claude Code active(s), ${busy} en cours de travail, ${waiting} en attente de validation`;
     status.show();
   });
 

@@ -2,7 +2,7 @@
   "name": "claude-sessions",
   "displayName": "Claude Sessions",
   "description": "Sessions Claude Code dans le panneau, à côté du terminal : un clic ouvre ou retrouve le terminal de la session.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "black",
   "private": true,
   "license": "MIT",
@@ -101,6 +101,12 @@
           "default": true,
           "description": "Afficher aussi les sessions terminées (lues depuis ~/.claude/history.jsonl)."
         },
+        "claudeSessions.hideInactiveAfterHours": {
+          "type": "number",
+          "default": 48,
+          "minimum": 0,
+          "description": "Masquer les projets sans activité depuis ce nombre d'heures (0 : tout afficher). Ils réapparaissent en tapant le nom de leur dossier dans le filtre. Les projets avec une session active et les dossiers ouverts dans la fenêtre restent visibles."
+        },
         "claudeSessions.recentPerProject": {
           "type": "number",
           "default": 5,
@@ -116,7 +122,8 @@
         "claudeSessions.claudeCommand": {
           "type": "string",
           "default": "claude",
-          "description": "Commande utilisée pour reprendre une session (« claude --resume <id> »)."
+          "scope": "machine",
+          "description": "Commande utilisée pour reprendre une session (« claude --resume <id> »). Exécutée dans un terminal : seuls les paramètres utilisateur (ou distants, sous WSL) peuvent la définir, pas le .vscode/settings.json d'un dépôt."
         },
         "claudeSessions.revealProjectOnClick": {
           "type": "boolean",

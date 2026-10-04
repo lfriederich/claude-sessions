@@ -9,6 +9,8 @@ export interface LiveSession {
   pid: number;
   sessionId: string;
   cwd: string;
+  /** Heure de démarrage du processus, telle que dans /proc/<pid>/stat (Linux). */
+  procStart?: string;
   name?: string;
   nameSource?: string;
   status?: string;
@@ -44,6 +46,7 @@ export interface ProjectGroup {
   sessions: SessionInfo[];
   liveCount: number;
   busyCount: number;
+  waitingCount: number;
 }
 
 export interface BuildOptions {
@@ -64,9 +67,20 @@ export function isPidAlive(pid: number): boolean {
   }
 }
 
+/**
+ * Le registre garde les fichiers des sessions tuées, et après un redémarrage de WSL les pids sont
+ * réattribués : un pid vivant ne suffit pas, il faut que le processus soit celui qui a écrit le fichier.
+ */
+export function isSessionAlive(s: LiveSession, procRoot = '/proc'): boolean {
+  if (!isPidAlive(s.pid)) return false;
+  if (s.procStart === undefined) return true;
+  const start = procStartTime(s.pid, procRoot);
+  return start === undefined || start === String(s.procStart); // pas de /proc (macOS, Windows) : le pid fait foi
+}
+
 export function readLiveSessions(
   dir: string = path.join(claudeDir(), 'sessions'),
-  alive: (pid: number) => boolean = isPidAlive,
+  alive: (s: LiveSession) => boolean = (s) => isSessionAlive(s),
 ): LiveSession[] {
   let files: string[];
   try {
@@ -79,7 +93,7 @@ export function readLiveSessions(
     try {
       const raw = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')) as Partial<LiveSession>;
       if (typeof raw.pid !== 'number' || typeof raw.sessionId !== 'string' || typeof raw.cwd !== 'string') continue;
-      if (!alive(raw.pid)) continue;
+      if (!alive(raw as LiveSession)) continue;
       out.push(raw as LiveSession);
     } catch {
       // fichier en cours d'écriture ou corrompu : ignoré
@@ -104,9 +118,16 @@ export function parseHistory(text: string): HistoryEntry[] {
   return out;
 }
 
+// L'historique pèse plusieurs Mo et ne change qu'à chaque prompt : on ne le relit que s'il a bougé.
+let historyCache: { file: string; mtimeMs: number; size: number; entries: HistoryEntry[] } | undefined;
+
 export function readHistory(file: string = path.join(claudeDir(), 'history.jsonl')): HistoryEntry[] {
   try {
-    return parseHistory(fs.readFileSync(file, 'utf8'));
+    const { mtimeMs, size } = fs.statSync(file);
+    if (historyCache && historyCache.file === file && historyCache.mtimeMs === mtimeMs && historyCache.size === size) return historyCache.entries;
+    const entries = parseHistory(fs.readFileSync(file, 'utf8'));
+    historyCache = { file, mtimeMs, size, entries };
+    return entries;
   } catch {
     return [];
   }
@@ -120,6 +141,11 @@ export function truncate(s: string, max = 60): string {
 
 export function isBusy(s: LiveSession): boolean {
   return (s.status ?? '').toLowerCase() === 'busy';
+}
+
+/** Bloquée sur une demande de permission ou une question (« waitingFor: dialog open »). */
+export function isWaiting(s: LiveSession): boolean {
+  return (s.status ?? '').toLowerCase() === 'waiting';
 }
 
 export function buildGroups(live: LiveSession[], history: HistoryEntry[], opts: BuildOptions): ProjectGroup[] {
@@ -169,17 +195,19 @@ export function buildGroups(live: LiveSession[], history: HistoryEntry[], opts: 
     if (!s.live && !s.hasRealPrompt) continue;
     let g = groups.get(s.project);
     if (!g) {
-      g = { project: s.project, sessions: [], liveCount: 0, busyCount: 0 };
+      g = { project: s.project, sessions: [], liveCount: 0, busyCount: 0, waitingCount: 0 };
       groups.set(s.project, g);
     }
     g.sessions.push(s);
     if (s.live) {
       g.liveCount++;
       if (isBusy(s.live)) g.busyCount++;
+      if (isWaiting(s.live)) g.waitingCount++;
     }
   }
 
-  const rank = (s: SessionInfo) => (s.live ? (isBusy(s.live) ? 0 : 1) : 2);
+  // Celles qui attendent une validation d'abord : ce sont les seules qui ont besoin de l'utilisateur.
+  const rank = (s: SessionInfo) => (s.live ? (isWaiting(s.live) ? 0 : isBusy(s.live) ? 1 : 2) : 3);
   const result: ProjectGroup[] = [];
   for (const g of groups.values()) {
     g.sessions.sort((a, b) => rank(a) - rank(b) || b.lastActivity - a.lastActivity);
@@ -191,6 +219,12 @@ export function buildGroups(live: LiveSession[], history: HistoryEntry[], opts: 
   const lastOf = (g: ProjectGroup) => Math.max(...g.sessions.map((s) => s.lastActivity));
   result.sort((a, b) => b.liveCount - a.liveCount || lastOf(b) - lastOf(a));
   return result;
+}
+
+/** Projet à masquer : aucune session vivante et dernière activité plus ancienne que le seuil (0 : jamais). */
+export function isInactive(g: ProjectGroup, hours: number, now = Date.now()): boolean {
+  if (hours <= 0 || g.liveCount > 0 || !g.sessions.length) return false;
+  return now - Math.max(...g.sessions.map((s) => s.lastActivity)) > hours * 3_600_000;
 }
 
 /** Remonte la chaîne des processus parents (Linux, via /proc). */
@@ -212,13 +246,29 @@ export function parentPids(pid: number, depth = 6, procRoot = '/proc'): number[]
   return out;
 }
 
-export function parsePpid(stat: string): number | undefined {
+/** Champ n (numérotation de proc(5), à partir de 1) de /proc/<pid>/stat. */
+function statField(stat: string, n: number): string | undefined {
   // Format : "pid (comm) state ppid ..." ; comm peut contenir des espaces et des parenthèses.
   const close = stat.lastIndexOf(')');
   if (close < 0) return undefined;
-  const fields = stat.slice(close + 1).trim().split(/\s+/);
-  const ppid = Number(fields[1]);
+  return stat.slice(close + 1).trim().split(/\s+/)[n - 3];
+}
+
+export function parsePpid(stat: string): number | undefined {
+  const ppid = Number(statField(stat, 4));
   return Number.isFinite(ppid) ? ppid : undefined;
+}
+
+export function parseStartTime(stat: string): string | undefined {
+  return statField(stat, 22);
+}
+
+export function procStartTime(pid: number, procRoot = '/proc'): string | undefined {
+  try {
+    return parseStartTime(fs.readFileSync(path.join(procRoot, String(pid), 'stat'), 'utf8'));
+  } catch {
+    return undefined;
+  }
 }
 
 export function formatRelative(ts: number, now = Date.now()): string {
