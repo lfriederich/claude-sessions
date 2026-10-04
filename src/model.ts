@@ -221,10 +221,22 @@ export function buildGroups(live: LiveSession[], history: HistoryEntry[], opts: 
   return result;
 }
 
-/** Projet à masquer : aucune session vivante et dernière activité plus ancienne que le seuil (0 : jamais). */
+/** Session terminée dont la dernière activité est plus ancienne que le seuil (0 : jamais). Une session vivante ne l'est jamais. */
+export function isInactiveSession(s: SessionInfo, hours: number, now = Date.now()): boolean {
+  return hours > 0 && !s.live && now - s.lastActivity > hours * 3_600_000;
+}
+
+/** Projet à masquer : toutes ses sessions sont inactives (donc aucune vivante). Un projet sans session ne l'est pas. */
 export function isInactive(g: ProjectGroup, hours: number, now = Date.now()): boolean {
-  if (hours <= 0 || g.liveCount > 0 || !g.sessions.length) return false;
-  return now - Math.max(...g.sessions.map((s) => s.lastActivity)) > hours * 3_600_000;
+  return g.sessions.length > 0 && g.sessions.every((s) => isInactiveSession(s, hours, now));
+}
+
+/** Racine du dépôt git qui contient ce dossier (présence d'un .git, fichier ou dossier), sans lancer git. */
+export function gitRoot(dir: string): string | undefined {
+  for (let d = dir; ; d = path.dirname(d)) {
+    if (fs.existsSync(path.join(d, '.git'))) return d;
+    if (path.dirname(d) === d) return undefined;
+  }
 }
 
 /** Remonte la chaîne des processus parents (Linux, via /proc). */

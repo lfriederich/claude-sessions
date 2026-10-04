@@ -8,15 +8,20 @@ automatiquement dans le panneau Terminal (commande interne `vscode.moveViews`) ;
 - **Clic sur une session** : affiche le terminal où elle tourne. Si la session est terminée, un terminal
   est ouvert dans son projet avec `claude --resume <id>`. Le dossier du projet est aussi révélé dans
   l'explorateur (désactivable via `claudeSessions.revealProjectOnClick`).
+- **Fichiers modifiés dans l'explorateur** : le dépôt git de chaque projet qui a une session active (ou qu'on
+  clique) est ouvert dans l'extension Git de VS Code, même s'il est trop profond sous le dossier ouvert pour être
+  détecté (`git.repositoryScanMaxDepth` vaut 1). Ses fichiers modifiés apparaissent alors dans l'arborescence.
+  Désactivable via `claudeSessions.openGitRepositories`.
 - **Terminal actif → session surlignée** : changer de terminal sélectionne la session correspondante.
 - **Disposition** : la liste et le terminal se partagent le panneau Terminal. La séparation se redimensionne
   et la liste peut être glissée à gauche ou à droite du terminal ; VS Code mémorise la disposition.
 - **Session qui attend une validation** (demande de permission ou question de Claude) : point orange,
   en tête de son projet, et la barre d'état passe en « N à valider » sur fond d'avertissement.
 - **Barre d'état** : nombre de sessions actives, et combien sont en train de travailler.
-- **Projets inactifs masqués** : un projet sans activité depuis 48 h (`claudeSessions.hideInactiveAfterHours`,
-  0 pour tout afficher) disparaît de la liste, sauf s'il a une session active ou s'il est ouvert dans la fenêtre.
-  Taper le nom de son dossier dans le filtre le fait réapparaître.
+- **Inactif masqué** : une session terminée depuis plus de 48 h (`claudeSessions.hideInactiveAfterHours`,
+  0 pour tout afficher) disparaît de la liste, et avec elle un projet qui n'a plus rien de récent, sauf s'il est
+  ouvert dans la fenêtre. Les sessions actives restent toujours visibles. Taper le nom d'un dossier dans le
+  filtre fait réapparaître ce projet avec toutes ses sessions.
 
 ## Installation sur un autre poste
 

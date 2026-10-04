@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { LiveSession, ProjectGroup, SessionInfo, buildGroups, claudeDir, isBusy, isInactive, isWaiting, parentPids, readHistory, readLiveSessions, truncate } from './model';
+import { LiveSession, ProjectGroup, SessionInfo, buildGroups, claudeDir, gitRoot, isBusy, isInactive, isInactiveSession, isWaiting, parentPids, readHistory, readLiveSessions, truncate } from './model';
 
 const VIEW_ID = 'claudeSessions.view';
 
@@ -107,6 +107,28 @@ async function expandInExplorer(projectPath: string): Promise<void> {
   await vscode.commands.executeCommand('revealInExplorer', uri);
 }
 
+// ---------- Git ----------
+
+/** Dépôts déjà confiés à l'extension Git : une fois par démarrage, pour ne pas rouvrir un dépôt fermé à la main. */
+const openedRepos = new Set<string>();
+
+/**
+ * Fait détecter par l'extension Git de VS Code le dépôt d'un projet. Elle ne cherche les dépôts qu'à
+ * git.repositoryScanMaxDepth (1 par défaut) sous le dossier ouvert : plus bas, ses fichiers modifiés
+ * n'apparaissent pas dans l'explorateur. Hors de l'espace de travail, l'explorateur ne montre rien : on s'abstient.
+ */
+async function openGitRepository(project: string): Promise<void> {
+  if (!cfg('openGitRepositories', true) || !isInsideWorkspace(project)) return;
+  const root = gitRoot(project);
+  if (!root || openedRepos.has(root)) return;
+  openedRepos.add(root);
+  try {
+    await vscode.commands.executeCommand('git.openRepository', root);
+  } catch (e) {
+    console.warn('[claude-sessions] git.openRepository a échoué :', e);
+  }
+}
+
 /**
  * Déplace la vue dans le conteneur du panneau Terminal, pour qu'elle s'affiche en permanence
  * à côté des terminaux. Le manifeste ne permet pas de cibler ce conteneur, mais la commande
@@ -128,6 +150,7 @@ interface WireSession {
   sessionId: string; title: string; project: string; lastPrompt: string; lastActivity: number; promptCount: number;
   live?: { pid: number; busy: boolean; waiting: boolean; status?: string; name?: string; startedAt?: number };
   inThisWindow: boolean;
+  inactive: boolean;
 }
 interface WireGroup { project: string; liveCount: number; busyCount: number; waitingCount: number; inactive: boolean; sessions: WireSession[] }
 
@@ -168,6 +191,7 @@ class SessionsView implements vscode.WebviewViewProvider {
     this.syncSelection();
     this.post();
     this.onChanged();
+    for (const g of this.groups) if (g.liveCount) void openGitRepository(g.project);
   }
 
   /** Surligne la session dont le terminal est actif. */
@@ -190,6 +214,7 @@ class SessionsView implements vscode.WebviewViewProvider {
         sessionId: s.sessionId, title: s.title, project: s.project, lastPrompt: s.lastPrompt, lastActivity: s.lastActivity, promptCount: s.promptCount,
         live: s.live ? { pid: s.live.pid, busy: isBusy(s.live), waiting: isWaiting(s.live), status: s.live.status, name: s.live.name, startedAt: s.live.startedAt } : undefined,
         inThisWindow: this.terminals.has(s.sessionId),
+        inactive: isInactiveSession(s, hideAfter),
       })),
     }));
     void this.view.webview.postMessage({ type: 'state', groups, selectedId: this.selectedId, showPast: cfg('showPastSessions', true), hideAfter });
@@ -204,6 +229,7 @@ class SessionsView implements vscode.WebviewViewProvider {
 
   async openSession(s: SessionInfo): Promise<void> {
     if (cfg('revealProjectOnClick', true)) await revealProject(s.project);
+    void openGitRepository(s.project);
     let term = this.terminals.get(s.sessionId);
     if (term && term.exitStatus !== undefined) term = undefined;
     if (!term && s.live) {

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { buildGroups, isInactive, isSessionAlive, parseHistory, parsePpid, parseStartTime, readHistory, readLiveSessions, truncate, formatRelative, LiveSession } from './model';
+import { buildGroups, gitRoot, isInactive, isInactiveSession, isSessionAlive, parseHistory, parsePpid, parseStartTime, readHistory, readLiveSessions, truncate, formatRelative, LiveSession } from './model';
 
 const live = (o: Partial<LiveSession>): LiveSession => ({ pid: 1, sessionId: 's', cwd: '/p', ...o });
 
@@ -43,6 +43,18 @@ test('readHistory ne relit le fichier que s\'il a changé', () => {
   assert.equal(readHistory(file), first, 'fichier inchangé : même résultat, sans relecture');
   fs.appendFileSync(file, line('b'));
   assert.deepEqual(readHistory(file).map((h) => h.sessionId), ['a', 'b']);
+});
+
+test('gitRoot remonte jusqu\'au dossier qui contient .git', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-repo-'));
+  fs.mkdirSync(path.join(repo, '.git'));
+  fs.mkdirSync(path.join(repo, 'a', 'b'), { recursive: true });
+  assert.equal(gitRoot(path.join(repo, 'a', 'b')), repo);
+  assert.equal(gitRoot(repo), repo);
+  const worktree = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-wt-'));
+  fs.writeFileSync(path.join(worktree, '.git'), 'gitdir: /ailleurs');
+  assert.equal(gitRoot(worktree), worktree, 'worktree ou sous-module : .git est un fichier');
+  assert.equal(gitRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'cs-none-'))), undefined);
 });
 
 test('readLiveSessions filtre les pids morts et les fichiers corrompus', () => {
@@ -94,13 +106,22 @@ test('buildGroups met en tête et compte les sessions qui attendent une validati
 
 test('isInactive masque un projet sans activité récente, jamais un projet vivant ou vide', () => {
   const h = 3_600_000, now = 100 * h;
-  const past = (lastActivity: number) => ({ sessionId: 'x', project: '/p', title: '', lastPrompt: '', lastActivity, promptCount: 1, hasRealPrompt: true });
-  const group = (lastActivity: number, liveCount = 0) => ({ project: '/p', sessions: [past(lastActivity)], liveCount, busyCount: 0, waitingCount: 0 });
+  const session = (lastActivity: number, l?: LiveSession) => ({ sessionId: 'x', project: '/p', title: '', lastPrompt: '', lastActivity, promptCount: 1, hasRealPrompt: true, live: l });
+  const group = (lastActivity: number, l?: LiveSession) => ({ project: '/p', sessions: [session(lastActivity, l)], liveCount: l ? 1 : 0, busyCount: 0, waitingCount: 0 });
   assert.equal(isInactive(group(now - 47 * h), 48, now), false);
   assert.equal(isInactive(group(now - 49 * h), 48, now), true);
-  assert.equal(isInactive(group(now - 49 * h, 1), 48, now), false, 'une session vivante garde le projet visible');
+  assert.equal(isInactive(group(now - 49 * h, live({ pid: 1 })), 48, now), false, 'une session vivante garde le projet visible');
   assert.equal(isInactive(group(now - 49 * h), 0, now), false, '0 : tout afficher');
   assert.equal(isInactive({ project: '/p', sessions: [], liveCount: 0, busyCount: 0, waitingCount: 0 }, 48, now), false, 'dossier de l\'espace de travail sans session');
+});
+
+test('isInactiveSession masque une vieille session terminée, jamais une session vivante', () => {
+  const h = 3_600_000, now = 1000 * h;
+  const s = (ageH: number, live?: LiveSession) => ({ sessionId: 'x', project: '/p', title: '', lastPrompt: '', lastActivity: now - ageH * h, promptCount: 1, hasRealPrompt: true, live });
+  assert.equal(isInactiveSession(s(629), 48, now), true);
+  assert.equal(isInactiveSession(s(47), 48, now), false);
+  assert.equal(isInactiveSession(s(629, live({ pid: 1 })), 48, now), false, 'vivante, même inactive depuis longtemps');
+  assert.equal(isInactiveSession(s(629), 0, now), false, '0 : tout afficher');
 });
 
 test('buildGroups respecte recentPerProject et showPast', () => {

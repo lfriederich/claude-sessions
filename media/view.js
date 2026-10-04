@@ -55,11 +55,12 @@
   function render() {
     const app = document.getElementById('app');
     const q = query.trim().toLowerCase();
-    // Un projet inactif n'apparaît que si on cherche son dossier.
-    const visible = state.groups.filter((g) => !g.inactive || (q && g.project.toLowerCase().includes(q)));
+    // Projets et sessions terminées inactifs n'apparaissent que si on cherche leur dossier.
+    const folderMatch = (g) => !!q && g.project.toLowerCase().includes(q);
+    const visible = state.groups.filter((g) => !g.inactive || folderMatch(g));
     const hidden = q ? 0 : state.groups.length - visible.length;
     const groups = visible
-      .map((g) => ({ ...g, sessions: g.sessions.filter((s) => !q || `${s.title} ${s.lastPrompt} ${g.project}`.toLowerCase().includes(q)) }))
+      .map((g) => ({ ...g, total: g.sessions.length, sessions: g.sessions.filter((s) => (!s.inactive || folderMatch(g)) && (!q || `${s.title} ${s.lastPrompt} ${g.project}`.toLowerCase().includes(q))) }))
       .filter((g) => g.sessions.length || (!q && !g.liveCount));
 
     let html = `
@@ -93,7 +94,7 @@
       if (!g.sessions.length) {
         html += `<div class="session none" data-action="newSession" data-project="${esc(g.project)}" title="Démarrer une session Claude dans ce dossier">
           <div class="dot">${I.plus}</div>
-          <div class="body"><div class="title">Aucune session</div><div class="meta"><span>cliquer pour en démarrer une</span></div></div>
+          <div class="body"><div class="title">${g.total ? 'Aucune session récente' : 'Aucune session'}</div><div class="meta"><span>cliquer pour en démarrer une</span></div></div>
         </div>`;
       }
       for (const s of g.sessions) {
