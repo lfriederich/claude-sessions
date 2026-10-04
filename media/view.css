@@ -10,6 +10,7 @@
   --busy: var(--vscode-charts-yellow, #e2b93d);
   --idle: var(--vscode-charts-green, #4caf50);
   --waiting: var(--vscode-charts-orange, #d18616);
+  --warn: var(--vscode-editorWarning-foreground, #cca700);
   --past: var(--vscode-disabledForeground, var(--muted));
   --badge-bg: var(--vscode-badge-background);
   --badge-fg: var(--vscode-badge-foreground);
@@ -96,6 +97,7 @@ body {
 .session.live-busy .meta .status { color: var(--busy); }
 .session.live-idle .meta .status { color: var(--idle); }
 .session.live-waiting .meta .status { color: var(--waiting); }
+.session .meta .shared { color: var(--warn); font-weight: 600; }
 .session .meta .here { display: inline-flex; align-items: center; gap: 3px; }
 .session .meta .here svg { width: 11px; height: 11px; }
 .session .meta .sep::before { content: '·'; }

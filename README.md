@@ -21,6 +21,10 @@ automatiquement dans le panneau Terminal (commande interne `vscode.moveViews`) ;
   une validation, une notification le signale (bouton « Afficher » pour aller à son terminal), sauf si ce terminal
   est déjà le terminal actif d'une fenêtre au premier plan. Désactivable via `claudeSessions.notifications`.
   Le panneau Sortie « Claude Sessions » note chaque changement de statut détecté et la décision prise.
+- **Dépôt partagé** : quand plusieurs sessions actives travaillent dans le même dépôt git (racine commune, même
+  depuis des sous-dossiers différents), elles portent un badge « ⚠ dépôt partagé » et une notification le signale
+  une fois. Deux worktrees distincts ne comptent pas : c'est la parade. Désactivable via
+  `claudeSessions.warnSharedRepository`.
 - **Barre d'état** : nombre de sessions actives, et combien sont en train de travailler.
 - **Inactif masqué** : une session terminée depuis plus de 48 h (`claudeSessions.hideInactiveAfterHours`,
   0 pour tout afficher) disparaît de la liste, et avec elle un projet qui n'a plus rien de récent, sauf s'il est

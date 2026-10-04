@@ -96,6 +96,7 @@
         const cls = s.live ? (s.live.waiting ? 'live-waiting' : s.live.busy ? 'live-busy' : 'live-idle') : 'past';
         const status = s.live ? (s.live.waiting ? 'attend une validation' : s.live.busy ? 'en cours' : 'en attente de réponse') : '';
         const meta = [
+          s.sharedWith ? `<span class="shared" title="${esc(`Même dépôt git que : ${s.sharedWith.map((t) => `« ${t} »`).join(', ')}. Risque d'écraser le travail non commité l'une de l'autre.`)}">⚠ dépôt partagé</span>` : '',
           status ? `<span class="status">${status}</span>` : '',
           `<span>${relative(s.lastActivity)}</span>`,
           !s.live && s.promptCount ? `<span>${s.promptCount} prompt${s.promptCount > 1 ? 's' : ''}</span>` : '',

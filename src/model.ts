@@ -253,6 +253,20 @@ export function gitRoot(dir: string): string | undefined {
   }
 }
 
+/**
+ * Dépôts git où travaillent plusieurs sessions vivantes à la fois (racine -> sessions) : elles risquent
+ * d'écraser le travail non commité l'une de l'autre. Deux worktrees distincts ont des racines distinctes.
+ */
+export function sharedRepositories(groups: ProjectGroup[], rootOf: (dir: string) => string | undefined = gitRoot): Map<string, SessionInfo[]> {
+  const byRoot = new Map<string, SessionInfo[]>();
+  for (const g of groups) for (const s of g.sessions) {
+    const root = s.live ? rootOf(s.project) : undefined;
+    if (root) byRoot.set(root, [...(byRoot.get(root) ?? []), s]);
+  }
+  for (const [root, sessions] of byRoot) if (sessions.length < 2) byRoot.delete(root);
+  return byRoot;
+}
+
 /** Remonte la chaîne des processus parents (Linux, via /proc). */
 export function parentPids(pid: number, depth = 6, procRoot = '/proc'): number[] {
   const out: number[] = [];

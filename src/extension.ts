@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { LiveSession, LiveStatus, ProjectGroup, SessionInfo, buildGroups, claudeDir, gitRoot, isBusy, isInactive, isInactiveSession, isWaiting, liveStatus, notableTransition, parentPids, readHistory, readLiveSessions, truncate } from './model';
+import { LiveSession, LiveStatus, ProjectGroup, SessionInfo, buildGroups, claudeDir, gitRoot, isBusy, isInactive, isInactiveSession, isWaiting, liveStatus, notableTransition, parentPids, sharedRepositories, readHistory, readLiveSessions, truncate } from './model';
 
 const VIEW_ID = 'claudeSessions.view';
 
@@ -154,6 +154,8 @@ interface WireSession {
   live?: { pid: number; busy: boolean; waiting: boolean };
   inThisWindow: boolean;
   inactive: boolean;
+  /** Titres des autres sessions vivantes du même dépôt git. */
+  sharedWith?: string[];
 }
 interface WireGroup { project: string; liveCount: number; busyCount: number; waitingCount: number; inactive: boolean; sessions: WireSession[] }
 
@@ -163,6 +165,8 @@ class SessionsView implements vscode.WebviewViewProvider {
   private selectedId: string | null = null;
   private terminals = new Map<string, vscode.Terminal>(); // sessionId -> terminal hébergeant la session (cette fenêtre)
   private lastStatus = new Map<string, LiveStatus>(); // statut au relevé précédent, pour détecter les transitions
+  private shared = new Map<string, SessionInfo[]>(); // racine git -> sessions vivantes qui la partagent
+  private warnedShared = new Set<string>(); // groupes déjà signalés : une notification par groupe et par démarrage
 
   constructor(private readonly ctx: vscode.ExtensionContext, private readonly onChanged: () => void) {}
 
@@ -192,10 +196,12 @@ class SessionsView implements vscode.WebviewViewProvider {
       const t = s.live ? terminalFor(s.live, pids) : ownTerminals.get(s.sessionId);
       if (t && t.exitStatus === undefined) this.terminals.set(s.sessionId, t);
     }
+    this.shared = cfg('warnSharedRepository', true) ? sharedRepositories(this.groups) : new Map();
     this.syncSelection();
     this.post();
     this.onChanged();
     this.notifyTransitions();
+    this.warnSharedRepositories();
     for (const g of this.groups) if (g.liveCount) void openGitRepository(g.project);
   }
 
@@ -228,6 +234,24 @@ class SessionsView implements vscode.WebviewViewProvider {
     }
   }
 
+  /**
+   * Prévient quand plusieurs sessions travaillent dans le même dépôt (cf. une session qui en efface le travail
+   * non commité d'une autre). Seulement si l'une d'elles tourne dans cette fenêtre, pour ne pas prévenir partout.
+   */
+  private warnSharedRepositories(): void {
+    for (const [root, sessions] of this.shared) {
+      const key = `${root}|${sessions.map((s) => s.sessionId).sort().join(',')}`;
+      if (this.warnedShared.has(key) || !sessions.some((s) => this.terminals.has(s.sessionId))) continue;
+      this.warnedShared.add(key);
+      const titles = sessions.map((s) => `« ${s.title} »`).join(', ');
+      log.info(`dépôt partagé ${root} : ${sessions.map((s) => s.sessionId).join(', ')}`);
+      void vscode.window.showWarningMessage(
+        `${sessions.length} sessions Claude travaillent dans le même dépôt (${path.basename(root)}) : ${titles}. `
+        + `Elles risquent d'écraser le travail non commité l'une de l'autre ; un worktree par session évite le problème.`,
+      );
+    }
+  }
+
   /** Surligne la session dont le terminal est actif. */
   syncSelection(): void {
     const active = vscode.window.activeTerminal;
@@ -240,6 +264,10 @@ class SessionsView implements vscode.WebviewViewProvider {
     if (!this.view) return;
     const hideAfter = cfg('hideInactiveAfterHours', 48);
     const roots = new Set((vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath));
+    const sharedWith = new Map<string, string[]>();
+    for (const sessions of this.shared.values()) for (const s of sessions) {
+      sharedWith.set(s.sessionId, sessions.filter((o) => o !== s).map((o) => o.title));
+    }
     const groups: WireGroup[] = this.groups.map((g) => ({
       project: g.project, liveCount: g.liveCount, busyCount: g.busyCount, waitingCount: g.waitingCount,
       // Les dossiers ouverts dans la fenêtre restent visibles même sans activité récente.
@@ -249,6 +277,7 @@ class SessionsView implements vscode.WebviewViewProvider {
         live: s.live ? { pid: s.live.pid, busy: isBusy(s.live), waiting: isWaiting(s.live) } : undefined,
         inThisWindow: this.terminals.has(s.sessionId),
         inactive: isInactiveSession(s, hideAfter),
+        sharedWith: sharedWith.get(s.sessionId),
       })),
     }));
     void this.view.webview.postMessage({ type: 'state', groups, selectedId: this.selectedId, showPast: cfg('showPastSessions', true), hideAfter });

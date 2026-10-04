@@ -2,7 +2,7 @@
   "name": "claude-sessions",
   "displayName": "Claude Sessions",
   "description": "Sessions Claude Code dans le panneau, à côté du terminal : un clic ouvre ou retrouve le terminal de la session.",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "publisher": "black",
   "private": true,
   "license": "MIT",
@@ -139,6 +139,11 @@
           "type": "boolean",
           "default": true,
           "description": "Prévenir quand une session qui tourne dans un terminal de cette fenêtre termine son travail ou attend une validation, sauf si son terminal est le terminal actif et que la fenêtre est au premier plan."
+        },
+        "claudeSessions.warnSharedRepository": {
+          "type": "boolean",
+          "default": true,
+          "description": "Signaler (badge dans la liste et notification) quand plusieurs sessions actives travaillent dans le même dépôt git : elles risquent d'écraser le travail non commité l'une de l'autre. Deux worktrees distincts ne sont pas signalés."
         },
         "claudeSessions.openGitRepositories": {
           "type": "boolean",

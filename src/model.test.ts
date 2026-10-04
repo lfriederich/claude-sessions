@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { buildGroups, gitRoot, liveStatus, notableTransition, isInactive, isInactiveSession, isSessionAlive, parseHistory, parsePpid, parseStartTime, readHistory, readLiveSessions, truncate, LiveSession } from './model';
+import { buildGroups, gitRoot, sharedRepositories, liveStatus, notableTransition, isInactive, isInactiveSession, isSessionAlive, parseHistory, parsePpid, parseStartTime, readHistory, readLiveSessions, truncate, LiveSession } from './model';
 
 const live = (o: Partial<LiveSession>): LiveSession => ({ pid: 1, sessionId: 's', cwd: '/p', ...o });
 
@@ -55,6 +55,22 @@ test('gitRoot remonte jusqu\'au dossier qui contient .git', () => {
   fs.writeFileSync(path.join(worktree, '.git'), 'gitdir: /ailleurs');
   assert.equal(gitRoot(worktree), worktree, 'worktree ou sous-module : .git est un fichier');
   assert.equal(gitRoot(fs.mkdtempSync(path.join(os.tmpdir(), 'cs-none-'))), undefined);
+});
+
+test('sharedRepositories regroupe les sessions vivantes par racine git, sous-dossiers compris', () => {
+  const roots: Record<string, string | undefined> = { '/r': '/r', '/r/sub': '/r', '/r-wt': '/r-wt', '/autre': '/autre', '/hors-git': undefined };
+  const lives = [
+    live({ pid: 1, sessionId: 'a', cwd: '/r' }),
+    live({ pid: 2, sessionId: 'b', cwd: '/r/sub' }),
+    live({ pid: 3, sessionId: 'c', cwd: '/r-wt' }),
+    live({ pid: 4, sessionId: 'd', cwd: '/autre' }),
+    live({ pid: 5, sessionId: 'e', cwd: '/hors-git' }),
+    live({ pid: 6, sessionId: 'f', cwd: '/hors-git' }),
+  ];
+  const history = parseHistory(JSON.stringify({ display: 'passée', timestamp: 1, project: '/autre', sessionId: 'old' }));
+  const shared = sharedRepositories(buildGroups(lives, history, { recentPerProject: 5, showPast: true }), (d) => roots[d]);
+  assert.deepEqual([...shared.keys()], ['/r'], 'worktree distinct, session passée et dossiers hors git ignorés');
+  assert.deepEqual(shared.get('/r')!.map((s) => s.sessionId).sort(), ['a', 'b']);
 });
 
 test('readLiveSessions filtre les pids morts et les fichiers corrompus', () => {
