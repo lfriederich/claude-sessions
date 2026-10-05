@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { buildGroups, gitRoot, sharedRepositories, liveStatus, notableTransition, isInactive, isInactiveSession, isSessionAlive, parseHistory, parsePpid, parseStartTime, readHistory, readLiveSessions, truncate, LiveSession } from './model';
+import { buildGroups, changeLetter, gitRoot, mergeChanges, sharedRepositories, liveStatus, notableTransition, isInactive, isInactiveSession, isSessionAlive, parseHistory, parsePpid, parseStartTime, readHistory, readLiveSessions, truncate, LiveSession } from './model';
 
 const live = (o: Partial<LiveSession>): LiveSession => ({ pid: 1, sessionId: 's', cwd: '/p', ...o });
 
@@ -71,6 +71,20 @@ test('sharedRepositories regroupe les sessions vivantes par racine git, sous-dos
   const shared = sharedRepositories(buildGroups(lives, history, { recentPerProject: 5, showPast: true }), (d) => roots[d]);
   assert.deepEqual([...shared.keys()], ['/r'], 'worktree distinct, session passée et dossiers hors git ignorés');
   assert.deepEqual(shared.get('/r')!.map((s) => s.sessionId).sort(), ['a', 'b']);
+});
+
+test('mergeChanges : une entrée par fichier, statut le plus parlant, triée par chemin', () => {
+  const MODIFIED = 5, INDEX_MODIFIED = 0, UNTRACKED = 7, INDEX_ADDED = 1, BOTH_MODIFIED = 18, DELETED = 6;
+  const files = mergeChanges([
+    [{ path: '/r/conflit.ts', status: BOTH_MODIFIED }],
+    [{ path: '/r/b.ts', status: MODIFIED }, { path: '/r/conflit.ts', status: MODIFIED }, { path: '/r/old.ts', status: DELETED }],
+    [{ path: '/r/nouveau.ts', status: UNTRACKED }],
+    [{ path: '/r/b.ts', status: INDEX_MODIFIED }, { path: '/r/a.ts', status: INDEX_ADDED }],
+  ]);
+  assert.deepEqual(files.map((f) => `${f.letter} ${f.path}`), ['A /r/a.ts', 'M /r/b.ts', '! /r/conflit.ts', 'U /r/nouveau.ts', 'D /r/old.ts']);
+  assert.equal(changeLetter(3), 'R');
+  assert.equal(changeLetter(11), 'T');
+  assert.equal(changeLetter(99), '!');
 });
 
 test('readLiveSessions filtre les pids morts et les fichiers corrompus', () => {

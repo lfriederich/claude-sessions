@@ -6,6 +6,8 @@
   const collapsed = new Set(saved.collapsed || []);
   /** @type {Set<string>} */
   const expanded = new Set(saved.expanded || []);
+  let changesCollapsed = !!saved.changesCollapsed;
+  const save = () => vscode.setState({ collapsed: [...collapsed], expanded: [...expanded], changesCollapsed });
   let query = '';
   let state = { groups: [], selectedId: null, showPast: true, hideAfter: 0 };
   /** Dernière session ramenée à l'écran : on ne recentre que si la sélection change. */
@@ -45,6 +47,23 @@
   function btn(action, title, icon, extra = '') {
     const on = extra.includes('data-on');
     return `<button class="iconbtn${on ? ' on' : ''}" data-action="${action}" title="${esc(title)}" ${extra}>${I[icon]}</button>`;
+  }
+
+  const LETTER_CLASS = { M: 'mod', T: 'mod', A: 'add', C: 'add', D: 'del', R: 'ren', U: 'unt', '!': 'conf' };
+
+  /** Fichiers modifiés du dépôt de la session sélectionnée, sous sa ligne. */
+  function changesBlock(c) {
+    const label = c.total ? `${c.total} fichier${c.total > 1 ? 's' : ''} modifié${c.total > 1 ? 's' : ''}` : 'Aucun fichier modifié';
+    let h = `<div class="changes ${changesCollapsed && c.total ? 'collapsed' : ''}">
+      <div class="changes-head" ${c.total ? 'data-action="toggleChanges"' : ''} title="Dépôt ${esc(c.repo)}">${c.total ? I.chev : ''}<span>${label}</span><span class="repo">${esc(c.repo)}</span></div>`;
+    for (const f of c.files) {
+      const i = f.rel.lastIndexOf('/');
+      h += `<div class="change" data-action="openChange" data-path="${esc(f.abs)}" title="${esc(f.rel)}">
+        <span class="letter ${LETTER_CLASS[f.letter] || ''}">${esc(f.letter)}</span><span class="fname">${esc(f.rel.slice(i + 1))}</span><span class="fdir">${esc(i > 0 ? f.rel.slice(0, i) : '')}</span>
+      </div>`;
+    }
+    if (c.total > c.files.length) h += `<div class="change more" data-action="showScm">… et ${c.total - c.files.length} autre${c.total - c.files.length > 1 ? 's' : ''} dans Contrôle de code source</div>`;
+    return h + `</div>`;
   }
 
   function render() {
@@ -111,6 +130,7 @@
             <div class="meta">${meta}</div>
           </div>
         </div>`;
+        if (state.changes?.sessionId === s.sessionId) html += changesBlock(state.changes);
       }
       html += `</div></section>`;
     }
@@ -147,7 +167,8 @@
       const project = actEl.getAttribute('data-project') || sessEl?.closest('.project')?.getAttribute('data-project');
       const id = sessEl?.getAttribute('data-id');
       if (action === 'togglePast') { vscode.postMessage({ type: 'togglePast' }); return; }
-      vscode.postMessage({ type: action, id, project });
+      if (action === 'toggleChanges') { changesCollapsed = !changesCollapsed; save(); render(); return; }
+      vscode.postMessage({ type: action, id, project, path: actEl.getAttribute('data-path') || undefined });
       return;
     }
     if (sessEl) { vscode.postMessage({ type: 'open', id: sessEl.getAttribute('data-id') }); return; }
@@ -155,7 +176,7 @@
       const p = headEl.parentElement.getAttribute('data-project');
       const g = state.groups.find((x) => x.project === p);
       if (isOpen(g)) { collapsed.add(p); expanded.delete(p); } else { expanded.add(p); collapsed.delete(p); }
-      vscode.setState({ collapsed: [...collapsed], expanded: [...expanded] });
+      save();
       render();
     }
   });

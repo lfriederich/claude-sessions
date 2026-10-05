@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { LiveSession, LiveStatus, ProjectGroup, SessionInfo, buildGroups, claudeDir, gitRoot, isBusy, isInactive, isInactiveSession, isWaiting, liveStatus, notableTransition, parentPids, sharedRepositories, readHistory, readLiveSessions, truncate } from './model';
+import { LiveSession, LiveStatus, ProjectGroup, SessionInfo, buildGroups, claudeDir, gitRoot, isBusy, isInactive, isInactiveSession, isWaiting, liveStatus, mergeChanges, notableTransition, parentPids, sharedRepositories, readHistory, readLiveSessions, truncate } from './model';
 
 const VIEW_ID = 'claudeSessions.view';
 
@@ -112,6 +112,34 @@ async function expandInExplorer(projectPath: string): Promise<void> {
 
 // ---------- Git ----------
 
+/** Sous-ensemble de l'API v1 de l'extension Git intégrée (extensions/git/src/api/git.d.ts). */
+interface GitChange { readonly uri: vscode.Uri; readonly status: number }
+interface GitRepository {
+  readonly rootUri: vscode.Uri;
+  readonly state: {
+    readonly workingTreeChanges: GitChange[]; readonly indexChanges: GitChange[]; readonly mergeChanges: GitChange[];
+    readonly untrackedChanges?: GitChange[]; readonly onDidChange: vscode.Event<void>;
+  };
+}
+interface GitAPI {
+  readonly repositories: GitRepository[];
+  getRepository(uri: vscode.Uri): GitRepository | null;
+  readonly onDidOpenRepository: vscode.Event<GitRepository>;
+}
+
+async function gitApi(): Promise<GitAPI | undefined> {
+  try {
+    const ext = vscode.extensions.getExtension<{ getAPI(version: 1): GitAPI }>('vscode.git');
+    return ext ? (await ext.activate()).getAPI(1) : undefined;
+  } catch (e) {
+    log.warn(`API de l'extension Git indisponible : ${e}`);
+    return undefined;
+  }
+}
+
+/** Nombre de fichiers envoyés au webview : au-delà, un lien vers la vue Contrôle de code source. */
+const MAX_CHANGED_FILES = 15;
+
 /** Dépôts déjà confiés à l'extension Git : une fois par démarrage, pour ne pas rouvrir un dépôt fermé à la main. */
 const openedRepos = new Set<string>();
 
@@ -157,6 +185,7 @@ interface WireSession {
   /** Titres des autres sessions vivantes du même dépôt git. */
   sharedWith?: string[];
 }
+interface WireChanges { sessionId: string; repo: string; total: number; files: { abs: string; rel: string; letter: string }[] }
 interface WireGroup { project: string; liveCount: number; busyCount: number; waitingCount: number; inactive: boolean; sessions: WireSession[] }
 
 class SessionsView implements vscode.WebviewViewProvider {
@@ -167,6 +196,7 @@ class SessionsView implements vscode.WebviewViewProvider {
   private lastStatus = new Map<string, LiveStatus>(); // statut au relevé précédent, pour détecter les transitions
   private shared = new Map<string, SessionInfo[]>(); // racine git -> sessions vivantes qui la partagent
   private warnedShared = new Set<string>(); // groupes déjà signalés : une notification par groupe et par démarrage
+  git?: GitAPI;
 
   constructor(private readonly ctx: vscode.ExtensionContext, private readonly onChanged: () => void) {}
 
@@ -280,9 +310,26 @@ class SessionsView implements vscode.WebviewViewProvider {
         sharedWith: sharedWith.get(s.sessionId),
       })),
     }));
-    void this.view.webview.postMessage({ type: 'state', groups, selectedId: this.selectedId, showPast: cfg('showPastSessions', true), hideAfter });
+    void this.view.webview.postMessage({
+      type: 'state', groups, selectedId: this.selectedId, showPast: cfg('showPastSessions', true), hideAfter, changes: this.changesFor(this.selectedId),
+    });
     const live = this.groups.reduce((n, g) => n + g.liveCount, 0);
     this.view.badge = live ? { value: live, tooltip: `${live} session(s) active(s)` } : undefined;
+  }
+
+  /** Fichiers modifiés du dépôt de la session sélectionnée, d'après l'extension Git (donc à jour en continu). */
+  private changesFor(id: string | null): WireChanges | undefined {
+    const s = id ? this.find(id) : undefined;
+    const repo = s && cfg('showChangedFiles', true) ? this.git?.getRepository(vscode.Uri.file(s.project)) : undefined;
+    if (!s || !repo) return undefined;
+    const st = repo.state;
+    const files = mergeChanges([st.mergeChanges, st.workingTreeChanges, st.untrackedChanges ?? [], st.indexChanges]
+      .map((group) => group.map((c) => ({ path: c.uri.fsPath, status: c.status }))));
+    const root = repo.rootUri.fsPath;
+    return {
+      sessionId: s.sessionId, repo: path.basename(root), total: files.length,
+      files: files.slice(0, MAX_CHANGED_FILES).map((f) => ({ abs: f.path, rel: path.relative(root, f.path), letter: f.letter })),
+    };
   }
 
   private find(id?: string): SessionInfo | undefined {
@@ -340,7 +387,7 @@ class SessionsView implements vscode.WebviewViewProvider {
     if (project) this.startNewSession(project);
   }
 
-  private async onMessage(m: { type: string; id?: string; project?: string }): Promise<void> {
+  private async onMessage(m: { type: string; id?: string; project?: string; path?: string }): Promise<void> {
     const s = this.find(m.id);
     switch (m.type) {
       case 'ready': case 'refresh': await this.refresh(); break;
@@ -348,6 +395,9 @@ class SessionsView implements vscode.WebviewViewProvider {
       case 'reveal': if (m.project) await revealProject(m.project); break;
       case 'newWindow': if (m.project) await revealProject(m.project, 'newWindow'); break;
       case 'newSession': if (m.project) this.startNewSession(m.project); break;
+      // Même diff qu'un clic dans la vue Contrôle de code source (non suivi : le fichier ; supprimé : la version HEAD).
+      case 'openChange': if (m.path) await vscode.commands.executeCommand('git.openChange', vscode.Uri.file(m.path)); break;
+      case 'showScm': await vscode.commands.executeCommand('workbench.view.scm'); break;
       case 'pickNewSession': await vscode.commands.executeCommand('claudeSessions.newSession'); break;
       case 'togglePast': await vscode.workspace.getConfiguration('claudeSessions').update('showPastSessions', !cfg('showPastSessions', true), vscode.ConfigurationTarget.Global); break;
     }
@@ -392,6 +442,16 @@ export function activate(context: vscode.ExtensionContext): void {
   const refresh = () => void view.refresh();
   let timer: NodeJS.Timeout | undefined;
   const debounced = () => { if (timer) clearTimeout(timer); timer = setTimeout(refresh, 250); };
+
+  // Chaque changement de fichier vu par l'extension Git rafraîchit la liste des fichiers modifiés.
+  void gitApi().then((git) => {
+    if (!git) return;
+    view.git = git;
+    const watch = (r: GitRepository) => context.subscriptions.push(r.state.onDidChange(debounced));
+    git.repositories.forEach(watch);
+    context.subscriptions.push(git.onDidOpenRepository((r) => { watch(r); debounced(); }));
+    debounced();
+  });
 
   const root = claudeDir();
   for (const dir of [path.join(root, 'sessions'), root]) {

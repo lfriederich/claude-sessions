@@ -267,6 +267,25 @@ export function sharedRepositories(groups: ProjectGroup[], rootOf: (dir: string)
   return byRoot;
 }
 
+export interface ChangedFile { path: string; letter: string }
+
+/** Lettre d'un statut de l'API Git (enum Status de git.d.ts), comme dans la vue Contrôle de code source. */
+export function changeLetter(status: number): string {
+  if (status >= 12) return '!'; // ADDED_BY_US … BOTH_MODIFIED : conflit
+  return ['M', 'A', 'D', 'R', 'C', 'M', 'D', 'U', 'I', 'A', 'R', 'T'][status] ?? '?';
+}
+
+/**
+ * Une entrée par fichier à partir des groupes de l'API Git, passés par ordre de priorité (conflits,
+ * copie de travail, non suivis, index) : un fichier modifié à la fois dans l'index et la copie de
+ * travail n'apparaît qu'une fois, avec le statut le plus parlant.
+ */
+export function mergeChanges(groups: { path: string; status: number }[][]): ChangedFile[] {
+  const byPath = new Map<string, ChangedFile>();
+  for (const group of groups) for (const c of group) if (!byPath.has(c.path)) byPath.set(c.path, { path: c.path, letter: changeLetter(c.status) });
+  return [...byPath.values()].sort((a, b) => a.path.localeCompare(b.path));
+}
+
 /** Remonte la chaîne des processus parents (Linux, via /proc). */
 export function parentPids(pid: number, depth = 6, procRoot = '/proc'): number[] {
   const out: number[] = [];

@@ -21,6 +21,10 @@ automatiquement dans le panneau Terminal (commande interne `vscode.moveViews`) ;
   une validation, une notification le signale (bouton « Afficher » pour aller à son terminal), sauf si ce terminal
   est déjà le terminal actif d'une fenêtre au premier plan. Désactivable via `claudeSessions.notifications`.
   Le panneau Sortie « Claude Sessions » note chaque changement de statut détecté et la décision prise.
+- **Fichiers modifiés de la session** : sous la session sélectionnée (celle du terminal actif), la liste des
+  fichiers modifiés de son dépôt git, lue dans l'extension Git de VS Code et donc à jour en continu ; elle suit le
+  changement de session. Un clic ouvre le même diff que dans la vue Contrôle de code source. Au-delà de 15
+  fichiers, un lien ouvre cette vue. Désactivable via `claudeSessions.showChangedFiles`.
 - **Dépôt partagé** : quand plusieurs sessions actives travaillent dans le même dépôt git (racine commune, même
   depuis des sous-dossiers différents), elles portent un badge « ⚠ dépôt partagé » et une notification le signale
   une fois. Deux worktrees distincts ne comptent pas : c'est la parade. Désactivable via
