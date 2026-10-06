@@ -1,7 +1,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { LiveSession, LiveStatus, ProjectGroup, SessionInfo, buildGroups, claudeDir, gitRoot, isBusy, isInactive, isInactiveSession, isWaiting, liveStatus, mergeChanges, notableTransition, parentPids, sharedRepositories, readHistory, readLiveSessions, truncate } from './model';
+import { CMD, WinProcess, WindowsProcesses, isWindowsPath, isWsl, killWindowsProcess, winParents, winSessionAlive, winToWsl, windowsClaudeDirFromWsl, wslToWin } from './windows';
+import { LiveSession, LiveStatus, ProjectGroup, SessionInfo, baseName, buildGroups, claudeDir, gitRoot, isBusy, isInactive, isInactiveSession, isSessionAlive, isWaiting, liveStatus, mergeChanges, notableTransition, parentPids, sharedRepositories, readHistory, readLiveSessions, truncate } from './model';
 
 const VIEW_ID = 'claudeSessions.view';
 
@@ -12,10 +13,32 @@ function cfg<T>(key: string, def: T): T {
   return vscode.workspace.getConfiguration('claudeSessions').get<T>(key, def);
 }
 
+const ON_WINDOWS = process.platform === 'win32';
+/** Session Windows vue depuis WSL : ses chemins et ses pids ne sont pas ceux de la machine de l'extension. */
+const isForeign = (p: string): boolean => !ON_WINDOWS && isWindowsPath(p);
+/** Chemins Windows comparés sans tenir compte de la casse ni du séparateur. */
+const samePath = (a: string, b: string): boolean => {
+  const n = (p: string) => (isWindowsPath(p) ? p.replace(/\//g, '\\').toLowerCase() : p).replace(/[\\/]+$/, '');
+  return n(a) === n(b);
+};
+
+function hasRegistry(dir: string): boolean {
+  try {
+    return fs.readdirSync(path.join(dir, 'sessions')).some((f) => f.endsWith('.json'));
+  } catch {
+    return false;
+  }
+}
+
 // ---------- Terminaux ----------
 
 /** Terminaux ouverts par l'extension (reprise ou nouvelle session), indexés par session ou par projet. */
 const ownTerminals = new Map<string, vscode.Terminal>();
+/**
+ * Nouvelles sessions lancées par l'extension, pas encore rattachées à leur entrée du registre. Une session
+ * Windows lancée depuis WSL ne se retrouve pas par les pids : on la reconnaît à son dossier et à son heure.
+ */
+const pendingNew: { project: string; term: vscode.Terminal; at: number }[] = [];
 
 async function terminalPids(): Promise<Map<number, vscode.Terminal>> {
   const map = new Map<number, vscode.Terminal>();
@@ -26,29 +49,49 @@ async function terminalPids(): Promise<Map<number, vscode.Terminal>> {
   return map;
 }
 
-function terminalFor(live: LiveSession, pids: Map<number, vscode.Terminal>): vscode.Terminal | undefined {
-  for (const p of parentPids(live.pid)) {
+function terminalFor(live: LiveSession, pids: Map<number, vscode.Terminal>, procs?: Map<number, WinProcess>): vscode.Terminal | undefined {
+  if (isForeign(live.cwd)) return undefined; // pids Windows, sans rapport avec ceux des terminaux WSL
+  // Sous Windows, pas de /proc : la parenté vient du relevé PowerShell.
+  const parents = ON_WINDOWS ? (procs ? winParents(live.pid, procs) : []) : parentPids(live.pid);
+  for (const p of parents) {
     const t = pids.get(p);
     if (t) return t;
   }
   return undefined;
 }
 
-function createClaudeTerminal(key: string, name: string, cwd: string, command: string): vscode.Terminal {
+function createClaudeTerminal(key: string, name: string, project: string, command: string): vscode.Terminal | undefined {
   const existing = ownTerminals.get(key);
   if (existing && existing.exitStatus === undefined) return existing;
-  const term = vscode.window.createTerminal({ name: truncate(name, 32), cwd, iconPath: new vscode.ThemeIcon('hubot') });
-  term.sendText(command);
+  let options: vscode.TerminalOptions = { name: truncate(name, 32), cwd: project, iconPath: new vscode.ThemeIcon('hubot') };
+  if (isForeign(project)) {
+    // Session Windows lancée depuis WSL : cmd.exe par l'interop, dans le dossier traduit en /mnt/<lecteur>,
+    // que l'interop retraduit en C:\…. cmd plutôt que PowerShell : il trouve claude.exe comme le claude.cmd de
+    // npm, sans buter sur la politique d'exécution qui bloque claude.ps1.
+    const cwd = winToWsl(project);
+    if (!cwd) {
+      void vscode.window.showErrorMessage(`Dossier Windows inaccessible depuis WSL : ${project}`);
+      return undefined;
+    }
+    options = { ...options, name: truncate(`${name} · Windows`, 32), cwd, shellPath: CMD, shellArgs: ['/k', command] };
+  }
+  const term = vscode.window.createTerminal(options);
+  if (!options.shellArgs) term.sendText(command);
   ownTerminals.set(key, term);
   return term;
 }
 
-function resumeInTerminal(s: SessionInfo): vscode.Terminal {
-  return createClaudeTerminal(s.sessionId, s.title || path.basename(s.project), s.project, `${cfg('claudeCommand', 'claude')} --resume ${s.sessionId}`);
+/** Commande Claude de la machine où tournera la session. */
+const claudeCommand = (project: string): string => (isForeign(project) ? cfg('windowsClaudeCommand', 'claude') : cfg('claudeCommand', 'claude'));
+
+function resumeInTerminal(s: SessionInfo): vscode.Terminal | undefined {
+  return createClaudeTerminal(s.sessionId, s.title || baseName(s.project), s.project, `${claudeCommand(s.project)} --resume ${s.sessionId}`);
 }
 
-function newSessionInTerminal(project: string): vscode.Terminal {
-  return createClaudeTerminal(`new:${project}:${Date.now()}`, `claude · ${path.basename(project)}`, project, cfg('claudeCommand', 'claude'));
+function newSessionInTerminal(project: string): vscode.Terminal | undefined {
+  const term = createClaudeTerminal(`new:${project}:${Date.now()}`, `claude · ${baseName(project)}`, project, claudeCommand(project));
+  if (term) pendingNew.push({ project, term, at: Date.now() });
+  return term;
 }
 
 // ---------- Projet ----------
@@ -186,7 +229,7 @@ interface WireSession {
   sharedWith?: string[];
 }
 interface WireChanges { sessionId: string; repo: string; total: number; files: { abs: string; rel: string; letter: string }[] }
-interface WireGroup { project: string; liveCount: number; busyCount: number; waitingCount: number; inactive: boolean; sessions: WireSession[] }
+interface WireGroup { project: string; liveCount: number; busyCount: number; waitingCount: number; inactive: boolean; windows: boolean; sessions: WireSession[] }
 
 class SessionsView implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
@@ -197,6 +240,9 @@ class SessionsView implements vscode.WebviewViewProvider {
   private shared = new Map<string, SessionInfo[]>(); // racine git -> sessions vivantes qui la partagent
   private warnedShared = new Set<string>(); // groupes déjà signalés : une notification par groupe et par démarrage
   git?: GitAPI;
+  /** %USERPROFILE%\.claude vu depuis WSL, quand les sessions Windows sont affichées. */
+  windowsDir?: string;
+  readonly winProcs = new WindowsProcesses((m) => log.warn(m));
 
   constructor(private readonly ctx: vscode.ExtensionContext, private readonly onChanged: () => void) {}
 
@@ -210,7 +256,17 @@ class SessionsView implements vscode.WebviewViewProvider {
 
   async refresh(): Promise<void> {
     const pids = await terminalPids();
-    this.groups = buildGroups(readLiveSessions(), readHistory(), {
+    const winDir = this.windowsDir;
+    // Pids Windows : relevé PowerShell, seulement s'il y a des sessions Windows à vérifier.
+    const needProcs = ON_WINDOWS ? hasRegistry(claudeDir()) : !!winDir && hasRegistry(winDir);
+    const procs = needProcs ? await this.winProcs.snapshot({ maxAgeMs: 4000, waitMs: 1500, onLate: () => void this.refresh() }) : undefined;
+    const live = ON_WINDOWS
+      // Sans relevé (PowerShell qui démarre), process.kill(pid, 0) fonctionne sous Windows, sans détecter les pids réattribués.
+      ? readLiveSessions(undefined, procs ? (s) => winSessionAlive(s, procs) : (s) => isSessionAlive(s))
+      // Depuis WSL, une session Windows ne peut être dite vivante que d'après un relevé.
+      : [...readLiveSessions(), ...(winDir && procs ? readLiveSessions(path.join(winDir, 'sessions'), (s) => winSessionAlive(s, procs)) : [])];
+    const history = [...readHistory(), ...(winDir ? readHistory(path.join(winDir, 'history.jsonl')) : [])];
+    this.groups = buildGroups(live, history, {
       recentPerProject: cfg('recentPerProject', 5),
       showPast: cfg('showPastSessions', true),
     });
@@ -222,8 +278,15 @@ class SessionsView implements vscode.WebviewViewProvider {
       }
     }
     this.terminals.clear();
+    for (let i = pendingNew.length - 1; i >= 0; i--) {
+      if (pendingNew[i].term.exitStatus !== undefined || Date.now() - pendingNew[i].at > 600_000) pendingNew.splice(i, 1);
+    }
     for (const g of this.groups) for (const s of g.sessions) {
-      const t = s.live ? terminalFor(s.live, pids) : ownTerminals.get(s.sessionId);
+      let t = (s.live ? terminalFor(s.live, pids, procs) : undefined) ?? ownTerminals.get(s.sessionId);
+      if (!t && s.live) {
+        const i = pendingNew.findIndex((p) => samePath(p.project, s.project) && (s.live!.startedAt ?? Date.now()) >= p.at - 5000);
+        if (i >= 0) { t = pendingNew[i].term; ownTerminals.set(s.sessionId, t); pendingNew.splice(i, 1); }
+      }
       if (t && t.exitStatus === undefined) this.terminals.set(s.sessionId, t);
     }
     this.shared = cfg('warnSharedRepository', true) ? sharedRepositories(this.groups) : new Map();
@@ -256,7 +319,7 @@ class SessionsView implements vscode.WebviewViewProvider {
         : undefined;
       log.info(`${s.sessionId} « ${s.title} » ${previous.get(s.sessionId)} -> ${now} : ${skip ? `pas de notification (${skip})` : 'notification'}`);
       if (skip) continue;
-      const where = path.basename(s.project);
+      const where = baseName(s.project);
       const shown = change === 'waiting'
         ? vscode.window.showWarningMessage(`« ${s.title} » attend une validation (${where}).`, 'Afficher')
         : vscode.window.showInformationMessage(`Claude a terminé : « ${s.title} » (${where}).`, 'Afficher');
@@ -302,6 +365,7 @@ class SessionsView implements vscode.WebviewViewProvider {
       project: g.project, liveCount: g.liveCount, busyCount: g.busyCount, waitingCount: g.waitingCount,
       // Les dossiers ouverts dans la fenêtre restent visibles même sans activité récente.
       inactive: !roots.has(g.project) && isInactive(g, hideAfter),
+      windows: isForeign(g.project),
       sessions: g.sessions.map((s) => ({
         sessionId: s.sessionId, title: s.title, lastPrompt: s.lastPrompt, lastActivity: s.lastActivity, promptCount: s.promptCount,
         live: s.live ? { pid: s.live.pid, busy: isBusy(s.live), waiting: isWaiting(s.live) } : undefined,
@@ -320,7 +384,7 @@ class SessionsView implements vscode.WebviewViewProvider {
   /** Fichiers modifiés du dépôt de la session sélectionnée, d'après l'extension Git (donc à jour en continu). */
   private changesFor(id: string | null): WireChanges | undefined {
     const s = id ? this.find(id) : undefined;
-    const repo = s && cfg('showChangedFiles', true) ? this.git?.getRepository(vscode.Uri.file(s.project)) : undefined;
+    const repo = s && !isForeign(s.project) && cfg('showChangedFiles', true) ? this.git?.getRepository(vscode.Uri.file(s.project)) : undefined;
     if (!s || !repo) return undefined;
     const st = repo.state;
     const files = mergeChanges([st.mergeChanges, st.workingTreeChanges, st.untrackedChanges ?? [], st.indexChanges]
@@ -338,8 +402,11 @@ class SessionsView implements vscode.WebviewViewProvider {
   }
 
   async openSession(s: SessionInfo): Promise<void> {
-    if (cfg('revealProjectOnClick', true)) await revealProject(s.project);
-    void openGitRepository(s.project);
+    // Un dossier Windows vu de WSL n'est pas dans l'espace de travail : ni explorateur ni dépôt à ouvrir.
+    if (!isForeign(s.project)) {
+      if (cfg('revealProjectOnClick', true)) await revealProject(s.project);
+      void openGitRepository(s.project);
+    }
     let term = this.terminals.get(s.sessionId);
     if (term && term.exitStatus !== undefined) term = undefined;
     if (!term && s.live) {
@@ -350,22 +417,73 @@ class SessionsView implements vscode.WebviewViewProvider {
       if (choice !== 'Reprendre ici quand même') return;
     }
     term ??= resumeInTerminal(s);
+    if (!term) return;
     this.terminals.set(s.sessionId, term);
     this.selectedId = s.sessionId;
     this.post();
     term.show(false);
   }
 
+  /**
+   * Termine une session vivante par SIGTERM : Claude s'arrête proprement (moins d'une seconde, et il retire
+   * lui-même son entrée du registre). Elle reste reprenable depuis la liste, comme toute session passée.
+   */
+  async stopSession(s: SessionInfo): Promise<void> {
+    if (!s.live) return;
+    const term = this.terminals.get(s.sessionId);
+    const windows = isWindowsPath(s.live.cwd);
+    const detail = (isBusy(s.live) ? 'Elle est en train de travailler : ce qu\'elle fait sera interrompu. ' : '')
+      + (windows ? 'Sous Windows, l\'arrêt est immédiat : Claude n\'a pas le temps de se fermer proprement. ' : '')
+      + 'Elle pourra être reprise plus tard depuis la liste.';
+    const STOP = 'Terminer', STOP_CLOSE = 'Terminer et fermer le terminal';
+    const choice = await vscode.window.showWarningMessage(`Terminer la session « ${s.title} » ?`, { modal: true, detail }, ...(term ? [STOP, STOP_CLOSE] : [STOP]));
+    if (!choice) return;
+    if (windows) return this.stopWindowsSession(s, s.live, choice === STOP_CLOSE ? term : undefined);
+    // Entre le relevé et la confirmation, le processus a pu se terminer et son pid être réattribué.
+    if (!isSessionAlive(s.live)) { void this.refresh(); return; }
+    try {
+      process.kill(s.live.pid, 'SIGTERM');
+    } catch (e) {
+      void vscode.window.showErrorMessage(`Impossible de terminer « ${s.title} » : ${e}`);
+      return;
+    }
+    log.info(`${s.sessionId} « ${s.title} » : SIGTERM envoyé au pid ${s.live.pid}`);
+    if (choice === STOP_CLOSE) term?.dispose();
+    const live = s.live;
+    for (let i = 0; i < 25 && isSessionAlive(live); i++) await new Promise((r) => setTimeout(r, 200));
+    if (isSessionAlive(live)) {
+      const force = await vscode.window.showWarningMessage(`« ${s.title} » ne s'est pas arrêtée après 5 s.`, 'Forcer l\'arrêt');
+      if (force && isSessionAlive(live)) process.kill(live.pid, 'SIGKILL');
+    }
+    void this.refresh();
+  }
+
+  /** Pas de SIGTERM sous Windows pour un programme console : taskkill /F, après un relevé frais. */
+  private async stopWindowsSession(s: SessionInfo, live: LiveSession, closeTerm?: vscode.Terminal): Promise<void> {
+    const procs = await this.winProcs.snapshot({ maxAgeMs: 0, waitMs: 30_000 });
+    if (!procs) { void vscode.window.showErrorMessage('Impossible de lister les processus Windows : session non terminée.'); return; }
+    if (!winSessionAlive(live, procs)) { void this.refresh(); return; }
+    try {
+      await killWindowsProcess(live.pid);
+    } catch (e) {
+      void vscode.window.showErrorMessage(`Impossible de terminer « ${s.title} » : ${e instanceof Error ? e.message : e}`);
+      return;
+    }
+    log.info(`${s.sessionId} « ${s.title} » : taskkill /F sur le pid Windows ${live.pid}`);
+    closeTerm?.dispose();
+    void this.refresh();
+  }
+
   startNewSession(project: string): void {
-    newSessionInTerminal(project).show(false);
+    newSessionInTerminal(project)?.show(false);
     setTimeout(() => void this.refresh(), 2000);
   }
 
   /** Choix du dossier pour une nouvelle session : espace de travail, projets connus, ou parcourir. */
   async pickProjectAndStart(): Promise<void> {
-    type Item = vscode.QuickPickItem & { project?: string; browse?: boolean };
+    type Item = vscode.QuickPickItem & { project?: string; browse?: boolean; browseWindows?: boolean };
     const ws = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
-    const known = this.groups.map((g) => g.project).filter((p) => !ws.includes(p) && fs.existsSync(p));
+    const known = this.groups.map((g) => g.project).filter((p) => !ws.includes(p) && !isForeign(p) && fs.existsSync(p));
     const items: Item[] = [];
     if (ws.length) {
       items.push({ label: 'Espace de travail', kind: vscode.QuickPickItemKind.Separator });
@@ -374,6 +492,12 @@ class SessionsView implements vscode.WebviewViewProvider {
     if (known.length) {
       items.push({ label: 'Projets connus', kind: vscode.QuickPickItemKind.Separator });
       items.push(...known.map((p) => ({ label: `$(history) ${path.basename(p)}`, description: p, project: p })));
+    }
+    if (this.windowsDir) {
+      const winKnown = this.groups.map((g) => g.project).filter(isForeign);
+      items.push({ label: 'Windows', kind: vscode.QuickPickItemKind.Separator });
+      items.push(...winKnown.map((p) => ({ label: `$(window) ${baseName(p)}`, description: p, project: p })));
+      items.push({ label: '$(window) Parcourir un dossier Windows…', browseWindows: true });
     }
     items.push({ label: '', kind: vscode.QuickPickItemKind.Separator });
     items.push({ label: '$(folder-opened) Parcourir un dossier…', browse: true });
@@ -384,6 +508,15 @@ class SessionsView implements vscode.WebviewViewProvider {
       const chosen = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, canSelectMany: false, openLabel: 'Démarrer Claude ici' });
       project = chosen?.[0]?.fsPath;
     }
+    if (pick.browseWindows && this.windowsDir) {
+      const chosen = await vscode.window.showOpenDialog({
+        canSelectFolders: true, canSelectFiles: false, canSelectMany: false, openLabel: 'Démarrer Claude ici (Windows)',
+        defaultUri: vscode.Uri.file(path.dirname(this.windowsDir)),
+      });
+      if (!chosen?.[0]) return;
+      project = wslToWin(chosen[0].fsPath);
+      if (!project) { void vscode.window.showErrorMessage('Choisir un dossier d\'un disque Windows (sous /mnt/<lecteur>).'); return; }
+    }
     if (project) this.startNewSession(project);
   }
 
@@ -392,6 +525,7 @@ class SessionsView implements vscode.WebviewViewProvider {
     switch (m.type) {
       case 'ready': case 'refresh': await this.refresh(); break;
       case 'open': if (s) await this.openSession(s); break;
+      case 'stop': if (s?.live) await this.stopSession(s); break;
       case 'reveal': if (m.project) await revealProject(m.project); break;
       case 'newWindow': if (m.project) await revealProject(m.project, 'newWindow'); break;
       case 'newSession': if (m.project) this.startNewSession(m.project); break;
@@ -443,6 +577,20 @@ export function activate(context: vscode.ExtensionContext): void {
   let timer: NodeJS.Timeout | undefined;
   const debounced = () => { if (timer) clearTimeout(timer); timer = setTimeout(refresh, 250); };
 
+  // Fenêtre WSL : sessions Windows lues dans %USERPROFILE%\.claude par /mnt (sans surveillance de fichiers,
+  // qui ne voit pas les écritures faites côté Windows : le sondage s'en charge).
+  const resolveWindowsDir = async () => {
+    const configured = cfg('windowsClaudeDir', '').trim();
+    const dir = !isWsl() || !cfg('includeWindowsSessions', true) ? undefined
+      : configured ? (winToWsl(configured) ?? configured) : await windowsClaudeDirFromWsl();
+    view.windowsDir = dir && fs.existsSync(dir) ? dir : undefined;
+    if (!view.windowsDir) view.winProcs.dispose();
+    log.info(`sessions Windows : ${view.windowsDir ?? 'non affichées'}`);
+    debounced();
+  };
+  void resolveWindowsDir();
+  context.subscriptions.push({ dispose: () => view.winProcs.dispose() });
+
   // Chaque changement de fichier vu par l'extension Git rafraîchit la liste des fichiers modifiés.
   void gitApi().then((git) => {
     if (!git) return;
@@ -476,6 +624,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.window.onDidOpenTerminal(() => setTimeout(debounced, 1500)),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (!e.affectsConfiguration('claudeSessions')) return;
+      if (e.affectsConfiguration('claudeSessions.includeWindowsSessions') || e.affectsConfiguration('claudeSessions.windowsClaudeDir')) void resolveWindowsDir();
       clearInterval(poll);
       poll = setInterval(refresh, cfg('pollIntervalSeconds', 5) * 1000);
       refresh();

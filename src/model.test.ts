@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { buildGroups, changeLetter, gitRoot, mergeChanges, sharedRepositories, liveStatus, notableTransition, isInactive, isInactiveSession, isSessionAlive, parseHistory, parsePpid, parseStartTime, readHistory, readLiveSessions, truncate, LiveSession } from './model';
+import { baseName, buildGroups, changeLetter, gitRoot, mergeChanges, sharedRepositories, liveStatus, notableTransition, isInactive, isInactiveSession, isSessionAlive, parseHistory, parsePpid, parseStartTime, readHistory, readLiveSessions, truncate, LiveSession } from './model';
 
 const live = (o: Partial<LiveSession>): LiveSession => ({ pid: 1, sessionId: 's', cwd: '/p', ...o });
 
@@ -85,6 +85,25 @@ test('mergeChanges : une entrée par fichier, statut le plus parlant, triée par
   assert.equal(changeLetter(3), 'R');
   assert.equal(changeLetter(11), 'T');
   assert.equal(changeLetter(99), '!');
+});
+
+test('gitRoot ignore un chemin Windows vu de Linux, au lieu de chercher depuis le dossier courant', () => {
+  assert.equal(gitRoot('C:\\Users\\x\\projet'), undefined);
+});
+
+test('readHistory garde un cache par fichier (WSL et Windows lus à chaque rafraîchissement)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-h-'));
+  const a = path.join(dir, 'a.jsonl'), b = path.join(dir, 'b.jsonl');
+  fs.writeFileSync(a, JSON.stringify({ display: 'a', timestamp: 1, project: '/p', sessionId: 'a' }) + '\n');
+  fs.writeFileSync(b, JSON.stringify({ display: 'b', timestamp: 1, project: 'C:\\p', sessionId: 'b' }) + '\n');
+  const ra = readHistory(a), rb = readHistory(b);
+  assert.equal(readHistory(a), ra, 'a toujours en cache après la lecture de b');
+  assert.equal(readHistory(b), rb);
+});
+
+test('baseName coupe les chemins Linux comme Windows', () => {
+  assert.equal(baseName('C:\\Users\\x\\projet\\'), 'projet');
+  assert.equal(baseName('/home/x/projet'), 'projet');
 });
 
 test('readLiveSessions filtre les pids morts et les fichiers corrompus', () => {

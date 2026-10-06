@@ -21,6 +21,7 @@
     folder: '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 3A1.5 1.5 0 013 1.5h3.2l1.6 1.5H13A1.5 1.5 0 0114.5 4.5v8A1.5 1.5 0 0113 14H3a1.5 1.5 0 01-1.5-1.5V3zM3 2.5a.5.5 0 00-.5.5v9.5a.5.5 0 00.5.5h10a.5.5 0 00.5-.5V4.5a.5.5 0 00-.5-.5H7.4L5.8 2.5H3z"/></svg>',
     plus: '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M7.5 2h1v5.5H14v1H8.5V14h-1V8.5H2v-1h5.5V2z"/></svg>',
     window: '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 3A1.5 1.5 0 013 1.5h10A1.5 1.5 0 0114.5 3v10a1.5 1.5 0 01-1.5 1.5H3A1.5 1.5 0 011.5 13V3zM3 2.5a.5.5 0 00-.5.5v1.5h11V3a.5.5 0 00-.5-.5H3zm10.5 3h-11V13a.5.5 0 00.5.5h10a.5.5 0 00.5-.5V5.5z"/></svg>',
+    stop: '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M4.5 3.5h7a1 1 0 011 1v7a1 1 0 01-1 1h-7a1 1 0 01-1-1v-7a1 1 0 011-1z"/></svg>',
     eye: '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 3c3.6 0 6.3 2.9 7 5-.7 2.1-3.4 5-7 5s-6.3-2.9-7-5c.7-2.1 3.4-5 7-5zm0 1C5.1 4 2.8 6.3 2.1 8 2.8 9.7 5.1 12 8 12s5.2-2.3 5.9-4C13.2 6.3 10.9 4 8 4zm0 1.5a2.5 2.5 0 110 5 2.5 2.5 0 010-5z"/></svg>',
   };
 
@@ -95,13 +96,14 @@
       html += `<section class="project ${open ? '' : 'collapsed'}" data-project="${esc(g.project)}">
         <div class="project-head" title="${esc(g.project)}">
           ${I.chev}<span class="name">${esc(base(g.project))}</span>
+          ${g.windows ? '<span class="pill os" title="Session Claude Code de Windows">Windows</span>' : ''}
           ${g.waitingCount ? `<span class="pill waiting">${g.waitingCount} à valider</span>` : ''}
           ${g.busyCount ? `<span class="pill busy">${g.busyCount} en cours</span>` : ''}
           ${idle ? `<span class="pill idle">${idle} en attente</span>` : ''}
           <span class="acts">
             ${btn('newSession', 'Nouvelle session Claude ici', 'plus', `data-project="${esc(g.project)}"`)}
-            ${btn('reveal', "Révéler dans l'explorateur", 'folder', `data-project="${esc(g.project)}"`)}
-            ${btn('newWindow', 'Ouvrir dans une nouvelle fenêtre', 'window', `data-project="${esc(g.project)}"`)}
+            ${g.windows ? '' : btn('reveal', "Révéler dans l'explorateur", 'folder', `data-project="${esc(g.project)}"`)}
+            ${g.windows ? '' : btn('newWindow', 'Ouvrir dans une nouvelle fenêtre', 'window', `data-project="${esc(g.project)}"`)}
           </span>
         </div>
         <div class="sessions">`;
@@ -129,6 +131,7 @@
             <div class="title">${esc(s.title)}</div>
             <div class="meta">${meta}</div>
           </div>
+          ${s.live ? `<span class="acts"><button class="stopbtn" data-action="stop" title="Terminer la session… (Suppr)">${I.stop}<span>Terminer</span></button></span>` : ''}
         </div>`;
         if (state.changes?.sessionId === s.sessionId) html += changesBlock(state.changes);
       }
@@ -184,6 +187,7 @@
     const el = /** @type {HTMLElement} */ (document.activeElement);
     if (!el?.classList.contains('session')) return;
     if (ev.key === 'Enter') vscode.postMessage({ type: 'open', id: el.getAttribute('data-id') });
+    if (ev.key === 'Delete') vscode.postMessage({ type: 'stop', id: el.getAttribute('data-id') });
     if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
       const all = [...document.querySelectorAll('.session')];
       const i = all.indexOf(el) + (ev.key === 'ArrowDown' ? 1 : -1);

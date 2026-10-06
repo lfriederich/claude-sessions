@@ -12,6 +12,10 @@ automatiquement dans le panneau Terminal (commande interne `vscode.moveViews`) ;
   clique) est ouvert dans l'extension Git de VS Code, même s'il est trop profond sous le dossier ouvert pour être
   détecté (`git.repositoryScanMaxDepth` vaut 1). Ses fichiers modifiés apparaissent alors dans l'arborescence.
   Désactivable via `claudeSessions.openGitRepositories`.
+- **Terminer une session active** : bouton carré au survol de la session, ou touche Suppr quand elle a le focus.
+  Après confirmation, Claude reçoit SIGTERM et s'arrête proprement ; si son terminal est dans la fenêtre, on
+  peut aussi le fermer. La session reste reprenable depuis la liste. Si elle ne s'est pas arrêtée après 5 s,
+  une notification propose de forcer l'arrêt.
 - **Terminal actif → session surlignée** : changer de terminal sélectionne la session correspondante.
 - **Disposition** : la liste et le terminal se partagent le panneau Terminal. La séparation se redimensionne
   et la liste peut être glissée à gauche ou à droite du terminal ; VS Code mémorise la disposition.
@@ -34,6 +38,21 @@ automatiquement dans le panneau Terminal (commande interne `vscode.moveViews`) ;
   0 pour tout afficher) disparaît de la liste, et avec elle un projet qui n'a plus rien de récent, sauf s'il est
   ouvert dans la fenêtre. Les sessions actives restent toujours visibles. Taper le nom d'un dossier dans le
   filtre fait réapparaître ce projet avec toutes ses sessions.
+
+## Sessions Windows
+
+- **VS Code lancé directement sous Windows** : la liste, les statuts, la reprise, l'arrêt et la détection du
+  terminal d'une session fonctionnent. Sans `/proc`, l'extension lit l'arbre des processus Windows par un
+  PowerShell qu'elle garde ouvert, lancé seulement quand des sessions sont actives.
+- **Fenêtre VS Code connectée à WSL** : les sessions Claude Code de Windows (`%USERPROFILE%\.claude`) s'affichent
+  aussi, avec une pastille « Windows ». Le bouton « + » propose une section Windows (projets Windows connus,
+  ou « Parcourir un dossier Windows… ») ; ces sessions, comme les reprises de sessions Windows, s'ouvrent dans un
+  terminal `cmd.exe` lancé par l'interop WSL. Il faut que Claude Code soit installé **sous Windows**.
+  Réglages : `claudeSessions.includeWindowsSessions`, `windowsClaudeDir`, `windowsClaudeCommand`.
+- Arrêter une session Windows est immédiat (`taskkill /F`) : il n'y a pas d'équivalent à SIGTERM pour un programme
+  console Windows.
+- Le premier relevé des processus Windows peut prendre 5 à 10 s (démarrage de PowerShell) : les sessions Windows
+  actives n'apparaissent qu'ensuite. Les suivants prennent environ 0,2 s.
 
 ## Installation sur un autre poste
 
@@ -114,6 +133,8 @@ F5 dans VS Code lance une fenêtre de développement avec l'extension chargée.
 
 - Ajouter un dossier à une fenêtre mono-dossier la transforme en espace de travail multi-racines,
   ce qui recharge la fenêtre une fois (comportement VS Code).
-- La détection du terminal qui héberge une session repose sur `/proc` : Linux et WSL uniquement. Sous
-  Windows natif ou macOS, la liste, les statuts et la reprise fonctionnent, mais un clic sur une session
-  vivante ne retrouve pas son terminal et propose de la reprendre dans un nouveau.
+- La détection du terminal qui héberge une session repose sur `/proc` (Linux, WSL) ou sur l'arbre des processus
+  Windows. Sous macOS, la liste, les statuts et la reprise fonctionnent, mais un clic sur une session vivante ne
+  retrouve pas son terminal et propose de la reprendre dans un nouveau.
+- Depuis WSL, une session Windows n'est rattachée à un terminal que si l'extension l'a lancée ou reprise : une
+  session démarrée dans un terminal Windows apparaît comme tournant « ailleurs ».

@@ -11,6 +11,7 @@
   --idle: var(--vscode-charts-green, #4caf50);
   --waiting: var(--vscode-charts-orange, #d18616);
   --warn: var(--vscode-editorWarning-foreground, #cca700);
+  --danger: var(--vscode-errorForeground, #f48771);
   --past: var(--vscode-disabledForeground, var(--muted));
   --badge-bg: var(--vscode-badge-background);
   --badge-fg: var(--vscode-badge-foreground);
@@ -67,6 +68,7 @@ body {
 }
 .project-head .pill.busy { background: color-mix(in srgb, var(--busy) 25%, transparent); color: var(--busy); }
 .project-head .pill.idle { background: color-mix(in srgb, var(--idle) 25%, transparent); color: var(--idle); }
+.project-head .pill.os { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent); }
 .project-head .pill.waiting { background: color-mix(in srgb, var(--waiting) 25%, transparent); color: var(--waiting); }
 .project-head .acts { display: none; gap: 2px; }
 .project-head:hover .acts { display: inline-flex; }
@@ -102,6 +104,18 @@ body {
 .session .meta .here svg { width: 11px; height: 11px; }
 .session .meta .sep::before { content: '·'; }
 .session:focus-visible { box-shadow: inset 0 0 0 1px var(--focus); }
+.session .acts { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); display: none; }
+.session:hover .acts, .session:focus-visible .acts { display: inline-flex; }
+/* Fond opaque teinté : le bouton ne se fond ni dans le survol de la ligne ni dans le texte qu'il recouvre. */
+.stopbtn {
+  display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px 0 6px;
+  border: 1px solid color-mix(in srgb, var(--danger) 60%, transparent); border-radius: 4px;
+  background: color-mix(in srgb, var(--danger) 20%, var(--bg)); color: var(--danger);
+  font: inherit; font-size: 11px; font-weight: 600; cursor: pointer;
+}
+.stopbtn svg { width: 11px; height: 11px; }
+.stopbtn:hover { background: var(--danger); border-color: var(--danger); color: var(--bg); }
+.stopbtn:focus-visible { outline: 1px solid var(--focus); outline-offset: 1px; }
 
 /* Fichiers modifiés de la session sélectionnée */
 .changes { margin: 0 0 4px 26px; font-size: 12px; }

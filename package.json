@@ -2,7 +2,7 @@
   "name": "claude-sessions",
   "displayName": "Claude Sessions",
   "description": "Sessions Claude Code dans le panneau, à côté du terminal : un clic ouvre ou retrouve le terminal de la session.",
-  "version": "0.1.6",
+  "version": "0.2.0",
   "publisher": "black",
   "private": true,
   "license": "MIT",
@@ -119,6 +119,23 @@
           "minimum": 1,
           "description": "Intervalle de rafraîchissement automatique (en plus de la surveillance des fichiers)."
         },
+        "claudeSessions.includeWindowsSessions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Depuis une fenêtre VS Code connectée à WSL : afficher aussi les sessions Claude Code de Windows (%USERPROFILE%\\.claude) et permettre d'en lancer ou d'en reprendre sous Windows."
+        },
+        "claudeSessions.windowsClaudeDir": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Dossier .claude de Windows, si ce n'est pas %USERPROFILE%\\.claude (chemin Windows ou /mnt/…). Vide : détection automatique."
+        },
+        "claudeSessions.windowsClaudeCommand": {
+          "type": "string",
+          "default": "claude",
+          "scope": "machine",
+          "description": "Commande Claude Code sous Windows, pour les sessions Windows lancées depuis une fenêtre WSL (exécutée par cmd.exe)."
+        },
         "claudeSessions.claudeCommand": {
           "type": "string",
           "default": "claude",
@@ -167,7 +184,7 @@
     "build": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "compile-tests": "tsc -p ./",
-    "test": "npm run compile-tests && node --test out/model.test.js",
+    "test": "npm run compile-tests && node --test out/model.test.js out/windows.test.js",
     "package": "npm run test && npm run build && vsce package --no-dependencies"
   },
   "devDependencies": {

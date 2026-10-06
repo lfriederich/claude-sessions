@@ -119,18 +119,25 @@ export function parseHistory(text: string): HistoryEntry[] {
 }
 
 // L'historique pèse plusieurs Mo et ne change qu'à chaque prompt : on ne le relit que s'il a bougé.
-let historyCache: { file: string; mtimeMs: number; size: number; entries: HistoryEntry[] } | undefined;
+// Un cache par fichier : celui de WSL et celui de Windows sont lus à chaque rafraîchissement.
+const historyCache = new Map<string, { mtimeMs: number; size: number; entries: HistoryEntry[] }>();
 
 export function readHistory(file: string = path.join(claudeDir(), 'history.jsonl')): HistoryEntry[] {
   try {
     const { mtimeMs, size } = fs.statSync(file);
-    if (historyCache && historyCache.file === file && historyCache.mtimeMs === mtimeMs && historyCache.size === size) return historyCache.entries;
+    const cached = historyCache.get(file);
+    if (cached && cached.mtimeMs === mtimeMs && cached.size === size) return cached.entries;
     const entries = parseHistory(fs.readFileSync(file, 'utf8'));
-    historyCache = { file, mtimeMs, size, entries };
+    historyCache.set(file, { mtimeMs, size, entries });
     return entries;
   } catch {
     return [];
   }
+}
+
+/** Dernier élément d'un chemin, qu'il soit Linux ou Windows (path.basename ne coupe que sur le séparateur de l'hôte). */
+export function baseName(p: string): string {
+  return p.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p;
 }
 
 export function truncate(s: string, max = 60): string {
@@ -247,6 +254,8 @@ export function isInactive(g: ProjectGroup, hours: number, now = Date.now()): bo
 
 /** Racine du dépôt git qui contient ce dossier (présence d'un .git, fichier ou dossier), sans lancer git. */
 export function gitRoot(dir: string): string | undefined {
+  // Un chemin Windows vu de Linux n'est pas absolu : path.dirname finirait sur « . », le dossier courant.
+  if (!path.isAbsolute(dir)) return undefined;
   for (let d = dir; ; d = path.dirname(d)) {
     if (fs.existsSync(path.join(d, '.git'))) return d;
     if (path.dirname(d) === d) return undefined;
