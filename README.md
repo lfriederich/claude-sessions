@@ -16,6 +16,12 @@ automatiquement dans le panneau Terminal (commande interne `vscode.moveViews`) ;
   Après confirmation, Claude reçoit SIGTERM et s'arrête proprement ; si son terminal est dans la fenêtre, on
   peut aussi le fermer. La session reste reprenable depuis la liste. Si elle ne s'est pas arrêtée après 5 s,
   une notification propose de forcer l'arrêt.
+- **Extension Claude Code** : les sessions créées dans l'extension officielle Claude Code (onglet de chat) sont
+  repérées par une icône de bulle et se rouvrent dans un onglet Claude Code, ou reprennent le focus si elles
+  sont déjà ouvertes. Une session d'un autre projet ouvre la fenêtre VS Code de ce projet, qui ouvre ensuite
+  la conversation d'elle-même. Le réglage `claudeSessions.openWith` choisit l'interface :
+  `auto` (défaut : là où la session a été créée ; une nouvelle session suit l'interface de la plus récente),
+  `terminal` ou `claudeExtension`.
 - **Terminal actif → session surlignée** : changer de terminal sélectionne la session correspondante.
 - **Disposition** : la liste et le terminal se partagent le panneau Terminal. La séparation se redimensionne
   et la liste peut être glissée à gauche ou à droite du terminal ; VS Code mémorise la disposition.
@@ -77,7 +83,7 @@ gh release download --repo lfriederich/claude-sessions --pattern '*.vsix'
 ### 2. Installer
 
 ```bash
-code --install-extension claude-sessions-0.1.0.vsix
+code --install-extension claude-sessions-0.3.0.vsix
 ```
 
 Ou dans VS Code : vue Extensions, menu `…`, « Install from VSIX… ».
@@ -130,6 +136,9 @@ code --install-extension claude-sessions-*.vsix
 F5 dans VS Code lance une fenêtre de développement avec l'extension chargée.
 
 ## Limites
+
+- L'extension Claude Code démarre ses conversations dans le **premier** dossier de la fenêtre : une session
+  dont le projet est un autre dossier s'ouvre dans une fenêtre dédiée à ce projet.
 
 - Ajouter un dossier à une fenêtre mono-dossier la transforme en espace de travail multi-racines,
   ce qui recharge la fenêtre une fois (comportement VS Code).

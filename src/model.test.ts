@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { baseName, buildGroups, changeLetter, gitRoot, mergeChanges, sharedRepositories, liveStatus, notableTransition, isInactive, isInactiveSession, isSessionAlive, parseHistory, parsePpid, parseStartTime, readHistory, readLiveSessions, truncate, LiveSession } from './model';
+import { baseName, buildGroups, changeLetter, gitRoot, mergeChanges, sharedRepositories, liveStatus, notableTransition, isInactive, isInactiveSession, isSessionAlive, parseHistory, parsePpid, parseStartTime, readHistory, readLiveSessions, truncate, LiveSession, projectDirName, readOrigin, originOf } from './model';
 
 const live = (o: Partial<LiveSession>): LiveSession => ({ pid: 1, sessionId: 's', cwd: '/p', ...o });
 
@@ -228,4 +228,28 @@ test('buildGroups : titre d\'une session vivante = vrai prompt, sinon nom utilis
   assert.equal(byId.a, 'sujet réel');
   assert.equal(byId.b, 'repo-32');
   assert.equal(byId.c, 'Mon nom');
+});
+
+test('projectDirName reproduit le nommage des dossiers de transcriptions', () => {
+  assert.equal(projectDirName('/home/black/repo/gym-coach'), '-home-black-repo-gym-coach');
+  assert.equal(projectDirName('/mnt/c/Program Files (x86)/WoW'), '-mnt-c-Program-Files--x86--WoW');
+  assert.equal(projectDirName('C:\\Users\\x\\proj'), 'C--Users-x-proj');
+});
+
+test("readOrigin lit l'interface d'origine dans la transcription", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-proj-'));
+  const dir = path.join(root, projectDirName('/p/x'));
+  fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir, 'vs1.jsonl'), '{"type":"user","entrypoint":"claude-vscode","cwd":"/p/x"}\n');
+  fs.writeFileSync(path.join(dir, 'cli1.jsonl'), '{"type":"user","entrypoint":"cli"}\n');
+  assert.equal(readOrigin('/p/x', 'vs1', root), 'vscode');
+  assert.equal(readOrigin('/p/x', 'cli1', root), 'terminal');
+  assert.equal(readOrigin('/p/x', 'absente', root), undefined);
+});
+
+test("buildGroups prend l'origine des sessions vivantes dans le registre", () => {
+  const g = buildGroups([live({ pid: 1, sessionId: 'v', cwd: '/p', entrypoint: 'claude-vscode' })], [], { recentPerProject: 5, showPast: true });
+  assert.equal(g[0]!.sessions[0]!.origin, 'vscode');
+  assert.equal(originOf('cli'), 'terminal');
+  assert.equal(originOf(undefined), undefined);
 });

@@ -22,6 +22,7 @@
     plus: '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M7.5 2h1v5.5H14v1H8.5V14h-1V8.5H2v-1h5.5V2z"/></svg>',
     window: '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 3A1.5 1.5 0 013 1.5h10A1.5 1.5 0 0114.5 3v10a1.5 1.5 0 01-1.5 1.5H3A1.5 1.5 0 011.5 13V3zM3 2.5a.5.5 0 00-.5.5v1.5h11V3a.5.5 0 00-.5-.5H3zm10.5 3h-11V13a.5.5 0 00.5.5h10a.5.5 0 00.5-.5V5.5z"/></svg>',
     stop: '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M4.5 3.5h7a1 1 0 011 1v7a1 1 0 01-1 1h-7a1 1 0 01-1-1v-7a1 1 0 011-1z"/></svg>',
+    chat: '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M2.5 2h11A1.5 1.5 0 0115 3.5v7a1.5 1.5 0 01-1.5 1.5H6.2L3 14.6V12h-.5A1.5 1.5 0 011 10.5v-7A1.5 1.5 0 012.5 2zm0 1a.5.5 0 00-.5.5v7a.5.5 0 00.5.5H4v1.4L5.8 11h7.7a.5.5 0 00.5-.5v-7a.5.5 0 00-.5-.5h-11z"/></svg>',
     eye: '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 3c3.6 0 6.3 2.9 7 5-.7 2.1-3.4 5-7 5s-6.3-2.9-7-5c.7-2.1 3.4-5 7-5zm0 1C5.1 4 2.8 6.3 2.1 8 2.8 9.7 5.1 12 8 12s5.2-2.3 5.9-4C13.2 6.3 10.9 4 8 4zm0 1.5a2.5 2.5 0 110 5 2.5 2.5 0 010-5z"/></svg>',
   };
 
@@ -121,7 +122,8 @@
           status ? `<span class="status">${status}</span>` : '',
           `<span>${relative(s.lastActivity)}</span>`,
           !s.live && s.promptCount ? `<span>${s.promptCount} prompt${s.promptCount > 1 ? 's' : ''}</span>` : '',
-          s.live && s.inThisWindow ? `<span class="here" title="Tourne dans un terminal de cette fenêtre">${I.terminal}</span>` : '',
+          s.origin === 'vscode' ? `<span class="origin" title="Session de l'extension Claude Code">${I.chat}</span>` : '',
+          s.live && s.inThisWindow ? `<span class="here" title="Ouverte dans cette fenêtre">${s.origin === 'vscode' ? 'ici' : I.terminal}</span>` : '',
           s.live && !s.inThisWindow ? `<span title="Tourne hors de cette fenêtre (pid ${s.live.pid})">ailleurs</span>` : '',
         ].filter(Boolean).join('<span class="sep"></span>');
         const tip = [s.title, s.lastPrompt && s.lastPrompt !== s.title ? `Dernier prompt : ${s.lastPrompt}` : '', `Session ${s.sessionId}`].filter(Boolean).join('\n');

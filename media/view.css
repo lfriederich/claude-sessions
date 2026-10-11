@@ -100,6 +100,8 @@ body {
 .session.live-idle .meta .status { color: var(--idle); }
 .session.live-waiting .meta .status { color: var(--waiting); }
 .session .meta .shared { color: var(--warn); font-weight: 600; }
+.session .meta .origin { display: inline-flex; align-items: center; color: var(--accent); }
+.session .meta .origin svg { width: 11px; height: 11px; }
 .session .meta .here { display: inline-flex; align-items: center; gap: 3px; }
 .session .meta .here svg { width: 11px; height: 11px; }
 .session .meta .sep::before { content: '·'; }

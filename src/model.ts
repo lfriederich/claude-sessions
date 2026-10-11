@@ -13,6 +13,8 @@ export interface LiveSession {
   procStart?: string;
   name?: string;
   nameSource?: string;
+  /** Interface qui a lancé le processus : « cli » (terminal), « claude-vscode » (extension Claude Code)… */
+  entrypoint?: string;
   status?: string;
   kind?: string;
   version?: string;
@@ -38,7 +40,49 @@ export interface SessionInfo {
   promptCount: number;
   /** Au moins un prompt qui n'est pas une commande slash. */
   hasRealPrompt: boolean;
+  /** Interface où la session a été créée, quand on la connaît. */
+  origin?: SessionOrigin;
   live?: LiveSession;
+}
+
+export type SessionOrigin = 'terminal' | 'vscode';
+
+export function originOf(entrypoint: string | undefined): SessionOrigin | undefined {
+  if (!entrypoint) return undefined;
+  return entrypoint === 'claude-vscode' ? 'vscode' : 'terminal';
+}
+
+/** Nom du dossier de transcriptions d'un projet : chaque caractère non alphanumérique devient « - ». */
+export function projectDirName(cwd: string): string {
+  return cwd.replace(/[^a-zA-Z0-9]/g, '-');
+}
+
+const originCache = new Map<string, SessionOrigin | null>();
+
+/**
+ * Interface d'origine d'une session passée, lue dans le début de sa transcription
+ * (~/.claude/projects/<projet>/<id>.jsonl, champ « entrypoint »). Mise en cache : elle ne change pas.
+ */
+export function readOrigin(project: string, sessionId: string, projectsRoot = path.join(claudeDir(), 'projects')): SessionOrigin | undefined {
+  const cached = originCache.get(sessionId);
+  if (cached !== undefined) return cached ?? undefined;
+  let origin: SessionOrigin | undefined;
+  try {
+    const fd = fs.openSync(path.join(projectsRoot, projectDirName(project), `${sessionId}.jsonl`), 'r');
+    try {
+      const buf = Buffer.alloc(32 * 1024);
+      const n = fs.readSync(fd, buf, 0, buf.length, 0);
+      const m = /"entrypoint":"([^"]+)"/.exec(buf.subarray(0, n).toString('utf8'));
+      origin = originOf(m?.[1]);
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    origin = undefined;
+  }
+  // Une transcription encore vide sera relue plus tard ; une origine trouvée est définitive.
+  if (origin) originCache.set(sessionId, origin);
+  return origin;
 }
 
 export interface ProjectGroup {
@@ -197,6 +241,7 @@ export function buildGroups(live: LiveSession[], history: HistoryEntry[], opts: 
     const userName = l.name && l.nameSource && l.nameSource !== 'derived' ? l.name : undefined;
     if (existing) {
       existing.live = l;
+      existing.origin = originOf(l.entrypoint) ?? existing.origin;
       existing.project = l.cwd;
       existing.lastActivity = Math.max(existing.lastActivity, activity);
       if (userName) existing.title = userName;
@@ -204,7 +249,7 @@ export function buildGroups(live: LiveSession[], history: HistoryEntry[], opts: 
     } else {
       byId.set(l.sessionId, {
         sessionId: l.sessionId, project: l.cwd, title: userName ?? l.name ?? 'Nouvelle session', lastPrompt: '',
-        lastActivity: activity, promptCount: 0, hasRealPrompt: false, live: l,
+        lastActivity: activity, promptCount: 0, hasRealPrompt: false, live: l, origin: originOf(l.entrypoint),
       });
     }
   }

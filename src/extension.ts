@@ -1,8 +1,9 @@
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { CMD, WinProcess, WindowsProcesses, isWindowsPath, isWsl, killWindowsProcess, winParents, winSessionAlive, winToWsl, windowsClaudeDirFromWsl, wslToWin } from './windows';
-import { LiveSession, LiveStatus, ProjectGroup, SessionInfo, baseName, buildGroups, claudeDir, gitRoot, isBusy, isInactive, isInactiveSession, isSessionAlive, isWaiting, liveStatus, mergeChanges, notableTransition, parentPids, sharedRepositories, readHistory, readLiveSessions, truncate } from './model';
+import { LiveSession, LiveStatus, ProjectGroup, SessionInfo, SessionOrigin, readOrigin, baseName, buildGroups, claudeDir, gitRoot, isBusy, isInactive, isInactiveSession, isSessionAlive, isWaiting, liveStatus, mergeChanges, notableTransition, parentPids, sharedRepositories, readHistory, readLiveSessions, truncate } from './model';
 
 const VIEW_ID = 'claudeSessions.view';
 
@@ -225,17 +226,89 @@ interface WireSession {
   live?: { pid: number; busy: boolean; waiting: boolean };
   inThisWindow: boolean;
   inactive: boolean;
+  /** Interface où la session a été créée. */
+  origin?: SessionOrigin;
   /** Titres des autres sessions vivantes du même dépôt git. */
   sharedWith?: string[];
 }
 interface WireChanges { sessionId: string; repo: string; total: number; files: { abs: string; rel: string; letter: string }[] }
 interface WireGroup { project: string; liveCount: number; busyCount: number; waitingCount: number; inactive: boolean; windows: boolean; sessions: WireSession[] }
 
+// ---------- Extension Claude Code ----------
+
+const CLAUDE_EXT_ID = 'anthropic.claude-code';
+const PENDING_KEY = 'pendingOpen.v1';
+
+interface PendingOpen { project: string; sessionId: string | null; at: number }
+
+function hasClaudeExtension(): boolean {
+  return vscode.extensions.getExtension(CLAUDE_EXT_ID) !== undefined;
+}
+
+/** Dossier où l'extension Claude Code démarre ses conversations : le premier de la fenêtre, sinon le dossier personnel. */
+function claudeExtensionRoot(): string {
+  return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir();
+}
+
+type Ui = 'terminal' | 'vscode';
+
+/**
+ * Interface à utiliser pour une session existante, ou pour une nouvelle (s = null). Une session Windows vue
+ * depuis WSL reste au terminal : l'extension Claude Code de cette fenêtre tourne côté Linux.
+ */
+function uiFor(s: SessionInfo | null, project: string, latestOrigin: SessionOrigin | undefined): Ui {
+  if (isForeign(project) || !hasClaudeExtension()) return 'terminal';
+  const setting = cfg<string>('openWith', 'auto');
+  if (setting === 'terminal') return 'terminal';
+  if (setting === 'claudeExtension') return 'vscode';
+  // auto : une session se rouvre là où elle a été créée ; une nouvelle suit l'interface de la session la plus récente.
+  return (s ? s.origin : latestOrigin) === 'vscode' ? 'vscode' : 'terminal';
+}
+
+async function openInClaudeExtension(sessionId: string | undefined): Promise<void> {
+  const ext = vscode.extensions.getExtension(CLAUDE_EXT_ID);
+  if (ext && !ext.isActive) await ext.activate();
+  await vscode.commands.executeCommand('claude-vscode.editor.open', sessionId);
+}
+
+/**
+ * Ouvre une conversation (sessionId) ou en démarre une (null) dans l'extension Claude Code, qui travaille dans
+ * le premier dossier de la fenêtre. Pour un autre projet, on ouvre ou rejoint la fenêtre de ce projet, qui
+ * reprend la main au démarrage grâce à la demande laissée dans globalState (partagé entre fenêtres).
+ */
+async function openWithClaudeExtension(ctx: vscode.ExtensionContext, project: string, sessionId: string | null): Promise<void> {
+  if (samePath(claudeExtensionRoot(), project)) {
+    await openInClaudeExtension(sessionId ?? undefined);
+    return;
+  }
+  if (!fs.existsSync(project)) {
+    void vscode.window.showWarningMessage(`Dossier introuvable : ${project}`);
+    return;
+  }
+  const pending: PendingOpen = { project, sessionId, at: Date.now() };
+  await ctx.globalState.update(PENDING_KEY, pending);
+  log.info(`ouverture de ${project} dans une autre fenêtre pour la session ${sessionId ?? '(nouvelle)'}`);
+  await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(project), { forceNewWindow: true });
+}
+
+/** Au démarrage d'une fenêtre : honore une ouverture demandée par une autre fenêtre pour ce projet. */
+async function consumePendingOpen(ctx: vscode.ExtensionContext): Promise<void> {
+  const p = ctx.globalState.get<PendingOpen>(PENDING_KEY);
+  if (!p || Date.now() - p.at > 2 * 60_000 || !samePath(claudeExtensionRoot(), p.project)) return;
+  await ctx.globalState.update(PENDING_KEY, undefined);
+  try {
+    await openInClaudeExtension(p.sessionId ?? undefined);
+  } catch (e) {
+    void vscode.window.showWarningMessage(`Impossible d'ouvrir la session dans Claude Code : ${String(e)}`);
+  }
+}
+
 class SessionsView implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
   groups: ProjectGroup[] = [];
   private selectedId: string | null = null;
   private terminals = new Map<string, vscode.Terminal>(); // sessionId -> terminal hébergeant la session (cette fenêtre)
+  private chatHere = new Set<string>(); // sessions de l'extension Claude Code ouvertes dans cette fenêtre
   private lastStatus = new Map<string, LiveStatus>(); // statut au relevé précédent, pour détecter les transitions
   private shared = new Map<string, SessionInfo[]>(); // racine git -> sessions vivantes qui la partagent
   private warnedShared = new Set<string>(); // groupes déjà signalés : une notification par groupe et par démarrage
@@ -277,6 +350,10 @@ class SessionsView implements vscode.WebviewViewProvider {
         if (!this.groups.some((g) => g.project === p)) this.groups.push({ project: p, sessions: [], liveCount: 0, busyCount: 0, waitingCount: 0 });
       }
     }
+    // Interface d'origine des sessions passées, lue dans leur transcription (les vivantes l'ont par le registre).
+    for (const g of this.groups) for (const s of g.sessions) {
+      s.origin ??= readOrigin(s.project, s.sessionId, isForeign(s.project) && winDir ? path.join(winDir, 'projects') : undefined);
+    }
     this.terminals.clear();
     for (let i = pendingNew.length - 1; i >= 0; i--) {
       if (pendingNew[i].term.exitStatus !== undefined || Date.now() - pendingNew[i].at > 600_000) pendingNew.splice(i, 1);
@@ -288,6 +365,13 @@ class SessionsView implements vscode.WebviewViewProvider {
         if (i >= 0) { t = pendingNew[i].term; ownTerminals.set(s.sessionId, t); pendingNew.splice(i, 1); }
       }
       if (t && t.exitStatus === undefined) this.terminals.set(s.sessionId, t);
+    }
+    // Une session de l'extension Claude Code ouverte dans cette fenêtre descend de son hôte d'extensions.
+    this.chatHere.clear();
+    for (const g of this.groups) for (const s of g.sessions) {
+      if (!s.live || s.origin !== 'vscode' || isForeign(s.project)) continue;
+      const ancestors = ON_WINDOWS ? (procs ? winParents(s.live.pid, procs) : []) : parentPids(s.live.pid, 8);
+      if (ancestors.includes(process.pid)) this.chatHere.add(s.sessionId);
     }
     this.shared = cfg('warnSharedRepository', true) ? sharedRepositories(this.groups) : new Map();
     this.syncSelection();
@@ -369,8 +453,9 @@ class SessionsView implements vscode.WebviewViewProvider {
       sessions: g.sessions.map((s) => ({
         sessionId: s.sessionId, title: s.title, lastPrompt: s.lastPrompt, lastActivity: s.lastActivity, promptCount: s.promptCount,
         live: s.live ? { pid: s.live.pid, busy: isBusy(s.live), waiting: isWaiting(s.live) } : undefined,
-        inThisWindow: this.terminals.has(s.sessionId),
+        inThisWindow: this.terminals.has(s.sessionId) || this.chatHere.has(s.sessionId),
         inactive: isInactiveSession(s, hideAfter),
+        origin: s.origin,
         sharedWith: sharedWith.get(s.sessionId),
       })),
     }));
@@ -401,7 +486,25 @@ class SessionsView implements vscode.WebviewViewProvider {
     return undefined;
   }
 
+  /** Origine de la session la plus récente : interface d'une nouvelle session en mode auto. */
+  private latestOrigin(): SessionOrigin | undefined {
+    let best: SessionInfo | undefined;
+    for (const g of this.groups) for (const s of g.sessions) if (s.origin && (!best || s.lastActivity > best.lastActivity)) best = s;
+    return best?.origin;
+  }
+
   async openSession(s: SessionInfo): Promise<void> {
+    if (uiFor(s, s.project, this.latestOrigin()) === 'vscode') {
+      if (samePath(claudeExtensionRoot(), s.project)) {
+        if (cfg('revealProjectOnClick', true)) await expandInExplorer(s.project);
+        void openGitRepository(s.project);
+      }
+      // Ouverte dans une autre fenêtre : openWithClaudeExtension rejoint la fenêtre de son projet au lieu de la dédoubler.
+      await openWithClaudeExtension(this.ctx, s.project, s.sessionId);
+      this.selectedId = s.sessionId;
+      this.post();
+      return;
+    }
     // Un dossier Windows vu de WSL n'est pas dans l'espace de travail : ni explorateur ni dépôt à ouvrir.
     if (!isForeign(s.project)) {
       if (cfg('revealProjectOnClick', true)) await revealProject(s.project);
@@ -475,7 +578,8 @@ class SessionsView implements vscode.WebviewViewProvider {
   }
 
   startNewSession(project: string): void {
-    newSessionInTerminal(project)?.show(false);
+    if (uiFor(null, project, this.latestOrigin()) === 'vscode') void openWithClaudeExtension(this.ctx, project, null);
+    else newSessionInTerminal(project)?.show(false);
     setTimeout(() => void this.refresh(), 2000);
   }
 
@@ -632,6 +736,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   refresh();
+  setTimeout(() => void consumePendingOpen(context), 1500);
 }
 
 export function deactivate(): void {}

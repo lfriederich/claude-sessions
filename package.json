@@ -2,7 +2,7 @@
   "name": "claude-sessions",
   "displayName": "Claude Sessions",
   "description": "Sessions Claude Code dans le panneau, à côté du terminal : un clic ouvre ou retrouve le terminal de la session.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "black",
   "private": true,
   "license": "MIT",
@@ -176,6 +176,21 @@
           "type": "boolean",
           "default": true,
           "description": "Afficher aussi les dossiers de l'espace de travail qui n'ont encore aucune session, pour pouvoir en démarrer une."
+        },
+        "claudeSessions.openWith": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "terminal",
+            "claudeExtension"
+          ],
+          "default": "auto",
+          "enumDescriptions": [
+            "Une session se rouvre là où elle a été créée (terminal ou extension Claude Code) ; une nouvelle session suit l'interface de la session la plus récente.",
+            "Toujours dans un terminal, avec la commande claude.",
+            "Toujours dans un onglet de l'extension Claude Code (si elle est installée)."
+          ],
+          "description": "Interface utilisée pour ouvrir ou démarrer une session Claude. Les sessions Windows vues depuis WSL s'ouvrent toujours dans un terminal."
         }
       }
     }
