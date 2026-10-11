@@ -2,7 +2,7 @@
   "name": "claude-sessions",
   "displayName": "Claude Sessions",
   "description": "Sessions Claude Code dans le panneau, à côté du terminal : un clic ouvre ou retrouve le terminal de la session.",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "publisher": "black",
   "private": true,
   "license": "MIT",
@@ -190,7 +190,20 @@
             "Toujours dans un terminal, avec la commande claude.",
             "Toujours dans un onglet de l'extension Claude Code (si elle est installée)."
           ],
-          "description": "Interface utilisée pour ouvrir ou démarrer une session Claude. Une session du chat Claude Code lancée sous Windows et vue depuis WSL s'ouvre dans le VS Code Windows."
+          "description": "Interface utilisée pour ouvrir ou démarrer une session Claude. Pour les sessions Windows vues depuis WSL, voir aussi claudeSessions.windowsSessionsOpenIn."
+        },
+        "claudeSessions.windowsSessionsOpenIn": {
+          "type": "string",
+          "enum": [
+            "thisWindow",
+            "windowsVscode"
+          ],
+          "default": "thisWindow",
+          "enumDescriptions": [
+            "Reprendre la session Windows dans un terminal de cette fenêtre (cmd.exe, commande claude ou exécutable de l'extension Claude Code).",
+            "Ouvrir les sessions du chat Claude Code dans le VS Code Windows, dans un onglet de chat."
+          ],
+          "description": "Fenêtre WSL : où ouvrir une session lancée sous Windows."
         }
       }
     }

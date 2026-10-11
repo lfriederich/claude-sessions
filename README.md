@@ -24,8 +24,9 @@ automatiquement dans le panneau Terminal (commande interne `vscode.moveViews`) ;
   `terminal` ou `claudeExtension`.
 - **Sans la commande `claude`** : qui n'utilise que l'extension Claude Code n'a pas la commande `claude`. La reprise
   dans un terminal utilise alors l'exécutable embarqué par l'extension Claude Code (côté Linux comme Windows).
-- **Sessions Windows vues depuis WSL** : une session du chat Claude Code lancée dans le VS Code Windows s'ouvre dans
-  ce VS Code Windows (fenêtre du projet, puis lien d'ouverture de l'extension Claude Code).
+- **Sessions Windows vues depuis WSL** : elles se reprennent dans un terminal de la fenêtre WSL, pour tout gérer depuis
+  un seul endroit. Avec `claudeSessions.windowsSessionsOpenIn` à `windowsVscode`, une session du chat Claude Code
+  lancée sous Windows s'ouvre plutôt dans un onglet de chat du VS Code Windows.
 - **Terminal actif → session surlignée** : changer de terminal sélectionne la session correspondante.
 - **Disposition** : la liste et le terminal se partagent le panneau Terminal. La séparation se redimensionne
   et la liste peut être glissée à gauche ou à droite du terminal ; VS Code mémorise la disposition.
@@ -87,7 +88,7 @@ gh release download --repo lfriederich/claude-sessions --pattern '*.vsix'
 ### 2. Installer
 
 ```bash
-code --install-extension claude-sessions-0.3.1.vsix
+code --install-extension claude-sessions-0.3.2.vsix
 ```
 
 Ou dans VS Code : vue Extensions, menu `…`, « Install from VSIX… ».

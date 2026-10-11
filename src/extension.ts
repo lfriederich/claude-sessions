@@ -319,7 +319,8 @@ async function openInWindowsVsCode(project: string, sessionId: string | null): P
 function uiFor(s: SessionInfo | null, project: string, latestOrigin: SessionOrigin | undefined): Ui {
   const setting = cfg<string>('openWith', 'auto');
   if (isForeign(project)) {
-    if (setting === 'terminal' || !windowsCodeExe()) return 'terminal';
+    // Par défaut, tout se gère depuis cette fenêtre : la session Windows est reprise dans un terminal d'ici.
+    if (cfg<string>('windowsSessionsOpenIn', 'thisWindow') !== 'windowsVscode' || setting === 'terminal' || !windowsCodeExe()) return 'terminal';
     if (setting === 'claudeExtension') return 'windowsVscode';
     return (s ? s.origin : latestOrigin) === 'vscode' ? 'windowsVscode' : 'terminal';
   }
