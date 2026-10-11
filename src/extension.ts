@@ -1,8 +1,10 @@
+import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import { CMD, WinProcess, WindowsProcesses, isWindowsPath, isWsl, killWindowsProcess, winParents, winSessionAlive, winToWsl, windowsClaudeDirFromWsl, wslToWin } from './windows';
+import { bundledClaude, onPath, quoted } from './claudeBinary';
+import { CMD, WinProcess, windowsHasCommand, WindowsProcesses, isWindowsPath, isWsl, killWindowsProcess, winParents, winSessionAlive, winToWsl, windowsClaudeDirFromWsl, wslToWin } from './windows';
 import { LiveSession, LiveStatus, ProjectGroup, SessionInfo, SessionOrigin, readOrigin, baseName, buildGroups, claudeDir, gitRoot, isBusy, isInactive, isInactiveSession, isSessionAlive, isWaiting, liveStatus, mergeChanges, notableTransition, parentPids, sharedRepositories, readHistory, readLiveSessions, truncate } from './model';
 
 const VIEW_ID = 'claudeSessions.view';
@@ -83,7 +85,31 @@ function createClaudeTerminal(key: string, name: string, project: string, comman
 }
 
 /** Commande Claude de la machine où tournera la session. */
-const claudeCommand = (project: string): string => (isForeign(project) ? cfg('windowsClaudeCommand', 'claude') : cfg('claudeCommand', 'claude'));
+/** %USERPROFILE% Windows, vu depuis cette machine (/mnt/c/Users/… sous WSL). */
+let winHome: string | undefined = ON_WINDOWS ? os.homedir() : undefined;
+/** « claude » est-il installé côté Windows ? undefined tant que la vérification n'a pas répondu. */
+let winHasClaude: boolean | undefined;
+
+/**
+ * Commande qui lance Claude pour ce projet. Sans réglage personnalisé et sans « claude » installé, on se rabat
+ * sur l'exécutable embarqué par l'extension Claude Code (cas courant de qui n'utilise que l'extension).
+ */
+function claudeCommand(project: string): string {
+  const windowsSide = isForeign(project) || ON_WINDOWS;
+  const configured = isForeign(project) ? cfg('windowsClaudeCommand', 'claude') : cfg('claudeCommand', 'claude');
+  if (configured !== 'claude') return configured;
+  if (windowsSide) {
+    if (winHasClaude !== false || !winHome) return 'claude';
+    const exe = bundledClaude([path.join(winHome, '.vscode', 'extensions'), path.join(winHome, '.vscode-insiders', 'extensions')], true);
+    return exe ? quoted(ON_WINDOWS ? exe : (wslToWin(exe) ?? exe)) : 'claude';
+  }
+  // L'hôte d'extensions n'a pas toujours ~/.local/bin dans son PATH, contrairement au shell du terminal.
+  const home = os.homedir();
+  const searchPath = [process.env.PATH ?? '', path.join(home, '.local', 'bin'), path.join(home, '.claude', 'local')].join(path.delimiter);
+  if (onPath('claude', searchPath)) return 'claude';
+  const exe = bundledClaude([path.join(home, '.vscode-server', 'extensions'), path.join(home, '.vscode', 'extensions')], false);
+  return exe ? quoted(exe) : 'claude';
+}
 
 function resumeInTerminal(s: SessionInfo): vscode.Terminal | undefined {
   return createClaudeTerminal(s.sessionId, s.title || baseName(s.project), s.project, `${claudeCommand(s.project)} --resume ${s.sessionId}`);
@@ -250,15 +276,54 @@ function claudeExtensionRoot(): string {
   return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir();
 }
 
-type Ui = 'terminal' | 'vscode';
+type Ui = 'terminal' | 'vscode' | 'windowsVscode';
+
+/** Code.exe du VS Code installé sous Windows, vu depuis WSL. */
+function windowsCodeExe(): string | undefined {
+  const candidates = [
+    winHome && path.join(winHome, 'AppData', 'Local', 'Programs', 'Microsoft VS Code', 'Code.exe'),
+    '/mnt/c/Program Files/Microsoft VS Code/Code.exe',
+  ];
+  return candidates.find((c): c is string => !!c && fs.existsSync(c));
+}
+
+function launchWindows(exe: string, args: string[]): void {
+  // Code.exe transmet ses arguments à l'instance déjà lancée puis se termine ; détaché au cas où il la démarre.
+  const child = spawn(exe, args, { cwd: '/mnt/c', detached: true, stdio: 'ignore' });
+  child.on('error', (e) => log.warn(`lancement de ${exe} : ${String(e)}`));
+  child.unref();
+}
+
+/**
+ * Session du chat Claude Code lancée sous Windows, vue depuis WSL : on l'ouvre dans le VS Code Windows.
+ * D'abord la fenêtre du projet (créée, ou ramenée au premier plan si elle existe), puis le lien d'ouverture
+ * de l'extension Claude Code, que VS Code remet à la fenêtre active.
+ */
+async function openInWindowsVsCode(project: string, sessionId: string | null): Promise<void> {
+  const exe = windowsCodeExe();
+  if (!exe) {
+    void vscode.window.showWarningMessage('VS Code pour Windows est introuvable : impossible d\'y ouvrir cette session.');
+    return;
+  }
+  const url = `vscode://anthropic.claude-code/open${sessionId ? `?session=${sessionId}` : ''}`;
+  log.info(`ouverture dans VS Code Windows : ${project}, puis ${url}`);
+  launchWindows(exe, [project]);
+  await new Promise((r) => setTimeout(r, 4000));
+  launchWindows(exe, ['--open-url', url]);
+}
 
 /**
  * Interface à utiliser pour une session existante, ou pour une nouvelle (s = null). Une session Windows vue
  * depuis WSL reste au terminal : l'extension Claude Code de cette fenêtre tourne côté Linux.
  */
 function uiFor(s: SessionInfo | null, project: string, latestOrigin: SessionOrigin | undefined): Ui {
-  if (isForeign(project) || !hasClaudeExtension()) return 'terminal';
   const setting = cfg<string>('openWith', 'auto');
+  if (isForeign(project)) {
+    if (setting === 'terminal' || !windowsCodeExe()) return 'terminal';
+    if (setting === 'claudeExtension') return 'windowsVscode';
+    return (s ? s.origin : latestOrigin) === 'vscode' ? 'windowsVscode' : 'terminal';
+  }
+  if (!hasClaudeExtension()) return 'terminal';
   if (setting === 'terminal') return 'terminal';
   if (setting === 'claudeExtension') return 'vscode';
   // auto : une session se rouvre là où elle a été créée ; une nouvelle suit l'interface de la session la plus récente.
@@ -494,7 +559,14 @@ class SessionsView implements vscode.WebviewViewProvider {
   }
 
   async openSession(s: SessionInfo): Promise<void> {
-    if (uiFor(s, s.project, this.latestOrigin()) === 'vscode') {
+    const ui = uiFor(s, s.project, this.latestOrigin());
+    if (ui === 'windowsVscode') {
+      await openInWindowsVsCode(s.project, s.sessionId);
+      this.selectedId = s.sessionId;
+      this.post();
+      return;
+    }
+    if (ui === 'vscode') {
       if (samePath(claudeExtensionRoot(), s.project)) {
         if (cfg('revealProjectOnClick', true)) await expandInExplorer(s.project);
         void openGitRepository(s.project);
@@ -578,7 +650,9 @@ class SessionsView implements vscode.WebviewViewProvider {
   }
 
   startNewSession(project: string): void {
-    if (uiFor(null, project, this.latestOrigin()) === 'vscode') void openWithClaudeExtension(this.ctx, project, null);
+    const ui = uiFor(null, project, this.latestOrigin());
+    if (ui === 'windowsVscode') void openInWindowsVsCode(project, null);
+    else if (ui === 'vscode') void openWithClaudeExtension(this.ctx, project, null);
     else newSessionInTerminal(project)?.show(false);
     setTimeout(() => void this.refresh(), 2000);
   }
@@ -688,11 +762,13 @@ export function activate(context: vscode.ExtensionContext): void {
     const dir = !isWsl() || !cfg('includeWindowsSessions', true) ? undefined
       : configured ? (winToWsl(configured) ?? configured) : await windowsClaudeDirFromWsl();
     view.windowsDir = dir && fs.existsSync(dir) ? dir : undefined;
+    if (view.windowsDir) winHome = path.dirname(view.windowsDir);
     if (!view.windowsDir) view.winProcs.dispose();
     log.info(`sessions Windows : ${view.windowsDir ?? 'non affichées'}`);
     debounced();
   };
   void resolveWindowsDir();
+  if (ON_WINDOWS || isWsl()) void windowsHasCommand('claude').then((ok) => { winHasClaude = ok; log.info(`claude côté Windows : ${ok ? 'installé' : 'absent, exécutable de l\'extension Claude Code utilisé'}`); });
   context.subscriptions.push({ dispose: () => view.winProcs.dispose() });
 
   // Chaque changement de fichier vu par l'extension Git rafraîchit la liste des fichiers modifiés.

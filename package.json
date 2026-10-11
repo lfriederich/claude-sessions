@@ -2,7 +2,7 @@
   "name": "claude-sessions",
   "displayName": "Claude Sessions",
   "description": "Sessions Claude Code dans le panneau, à côté du terminal : un clic ouvre ou retrouve le terminal de la session.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publisher": "black",
   "private": true,
   "license": "MIT",
@@ -134,13 +134,13 @@
           "type": "string",
           "default": "claude",
           "scope": "machine",
-          "description": "Commande Claude Code sous Windows, pour les sessions Windows lancées depuis une fenêtre WSL (exécutée par cmd.exe)."
+          "description": "Commande Claude Code sous Windows, pour les sessions Windows lancées depuis une fenêtre WSL (exécutée par cmd.exe). Laissé à « claude » alors que la commande n'est pas installée, l'exécutable embarqué par l'extension Claude Code est utilisé."
         },
         "claudeSessions.claudeCommand": {
           "type": "string",
           "default": "claude",
           "scope": "machine",
-          "description": "Commande utilisée pour reprendre une session (« claude --resume <id> »). Exécutée dans un terminal : seuls les paramètres utilisateur (ou distants, sous WSL) peuvent la définir, pas le .vscode/settings.json d'un dépôt."
+          "description": "Commande utilisée pour reprendre une session (« claude --resume <id> »). Exécutée dans un terminal : seuls les paramètres utilisateur (ou distants, sous WSL) peuvent la définir, pas le .vscode/settings.json d'un dépôt. Laissé à « claude » alors que la commande n'est pas installée, l'exécutable embarqué par l'extension Claude Code est utilisé."
         },
         "claudeSessions.revealProjectOnClick": {
           "type": "boolean",
@@ -190,7 +190,7 @@
             "Toujours dans un terminal, avec la commande claude.",
             "Toujours dans un onglet de l'extension Claude Code (si elle est installée)."
           ],
-          "description": "Interface utilisée pour ouvrir ou démarrer une session Claude. Les sessions Windows vues depuis WSL s'ouvrent toujours dans un terminal."
+          "description": "Interface utilisée pour ouvrir ou démarrer une session Claude. Une session du chat Claude Code lancée sous Windows et vue depuis WSL s'ouvre dans le VS Code Windows."
         }
       }
     }
@@ -199,7 +199,7 @@
     "build": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "compile-tests": "tsc -p ./",
-    "test": "npm run compile-tests && node --test out/model.test.js out/windows.test.js",
+    "test": "npm run compile-tests && node --test out/model.test.js out/windows.test.js out/claudeBinary.test.js",
     "package": "npm run test && npm run build && vsce package --no-dependencies"
   },
   "devDependencies": {

@@ -76,6 +76,13 @@ export function winParents(pid: number, procs: Map<number, WinProcess>, depth = 
 }
 
 /** %USERPROFILE%\.claude vu depuis WSL (/mnt/c/Users/<nom>/.claude), s'il existe. */
+/** La commande est-elle trouvable côté Windows (« where ») ? */
+export function windowsHasCommand(command: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    execFile(CMD, ['/c', 'where', command], { cwd: WIN_CWD, timeout: 15_000, windowsHide: true }, (err) => resolve(!err));
+  });
+}
+
 export function windowsClaudeDirFromWsl(): Promise<string | undefined> {
   return new Promise((resolve) => {
     execFile(CMD, ['/c', 'echo %USERPROFILE%'], { cwd: WIN_CWD, timeout: 15_000, windowsHide: true }, (err, stdout) => {
